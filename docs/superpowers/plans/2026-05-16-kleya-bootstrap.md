@@ -6,7 +6,51 @@
 
 **Architecture:** Cargo workspace, four crates: `kleya-core` (domain + ports, no I/O), `kleya-aws` (EC2 adapter), `kleya-cli` (the binary), `kleya-bootstrap-assets` (embedded user-data + ghostty terminfo). `kleya-core` defines a `CloudCompute` trait that the AWS adapter implements; the CLI wires everything together. Tests against an `InMemoryCloudCompute` fake for unit/integration, and against Floci (Docker AWS emulator) for AWS-shaped tests.
 
-**Tech Stack:** Rust 1.95.0 (stable), `tokio` (current-thread), `clap`, `serde`, `serde_yaml`, `serde_json`, `toml`, `jsonc-parser`, `minijinja` (user-data template), `flate2` + `base64` (user-data encoding), `aws-sdk-ec2` + `aws-config`, `tracing`, `thiserror`, `async-trait`, `ssh-key` (Ed25519), `nix` (execvp + chmod), `proptest`, `insta` (snapshot tests), `cargo-nextest`, `cargo-llvm-cov`, jj (jujutsu) for VCS, `lefthook` pre-push.
+**Tech Stack:** Rust 1.95.0 (stable), `tokio` (current-thread), `clap`, `serde`, `serde_yaml`, `serde_json`, `toml`, `jsonc-parser`, `minijinja` (user-data template), `flate2` + `base64` (user-data encoding), `aws-sdk-ec2` + `aws-config`, `tracing`, `thiserror`, `async-trait`, `ssh-key` (Ed25519), `md-5` + `hex` (EC2-style fingerprints in the keystore), `nix` (execvp + chmod), `proptest`, `insta` (snapshot tests), `cargo-nextest`, `cargo-llvm-cov`, jj (jujutsu) for VCS, `lefthook` pre-push.
+
+---
+
+## Per-Task Commit Convention
+
+Every task ends with the same VCS sequence after its `Verify` step passes. **Do not skip this** — frequent small commits are mandatory per the Tiger-style guidelines.
+
+```bash
+# After Verify passes on Task N:
+jj describe -m "<subject>"          # Conventional Commits: type(scope): subject
+jj bookmark move main --to @        # advance main to the just-described commit
+jj new                              # start Task N+1 in a fresh working revision
+# Push only when the user asks; do not push autonomously.
+```
+
+**Subject lines per task** (use these verbatim):
+
+| Task | Subject |
+|---|---|
+| 1  | `chore: scaffold kleya workspace and toolchain` |
+| 2  | `feat(core): add named limits with compile-time relations` |
+| 3  | `feat(core): add Error enum and Result alias` |
+| 4  | `feat(core): add domain newtypes with validation` |
+| 5  | `feat(core): add Config struct and validate()` |
+| 6  | `feat(core): add CloudCompute, KeyStore, Clock, IdGen ports` |
+| 7  | `feat(assets): embed bootstrap template and ghostty terminfo` |
+| 8  | `feat(core): render user-data via minijinja` |
+| 9  | `feat(core): gzip+base64 encode user-data with size bounds` |
+| 10 | `feat(core): add in-memory fakes for test_support` |
+| 11 | `feat(core): add template create/update/list/delete service` |
+| 12 | `feat(core): add launch service with zero-config defaults` |
+| 13 | `feat(core): add list and terminate services` |
+| 14 | `feat(core): add connect service with tag-based key lookup` |
+| 15 | `feat(aws): scaffold ec2 adapter and client builder` |
+| 16 | `feat(aws): implement CloudCompute against aws-sdk-ec2` |
+| 17 | `test(aws): integrate Floci-backed adapter tests` |
+| 18 | `feat(cli): wire clap surface, dispatch, and exit codes` |
+| 19 | `feat(cli): load TOML/YAML/JSON/JSONC config and round-trip` |
+| 20 | `feat(cli): filesystem KeyStore with Ed25519 and fingerprint` |
+| 21 | `refactor(cli): make dispatch testable via run_with` |
+| 22 | `chore: lefthook, cargo-deny, and GitHub Actions CI` |
+| 23 | `chore: end-to-end sanity check` |
+
+If a task lands partial work (e.g., a clippy fix that needs a follow-up), use a `wip:` or `fixup:` prefix and squash before pushing to `main`.
 
 ---
 
@@ -1108,7 +1152,7 @@ pub trait CloudCompute: Send + Sync {
 ```rust
 use std::path::PathBuf;
 use crate::Result;
-use crate::model::key::{KeyName, KeyPair, PublicKey};
+use crate::model::key::{Fingerprint, KeyName, KeyPair, PublicKey};
 
 pub trait KeyStore: Send + Sync {
     fn ensure_dir(&self) -> Result<PathBuf>;
@@ -1117,6 +1161,12 @@ pub trait KeyStore: Send + Sync {
     fn private_path(&self, name: &KeyName) -> Result<PathBuf>;
     fn exists(&self, name: &KeyName) -> bool;
     fn delete(&self, name: &KeyName) -> Result<()>;
+
+    /// EC2-style MD5 fingerprint of the *public* key, colon-separated hex.
+    /// Format: `aa:bb:cc:...` over the MD5 of the base64-decoded body of the
+    /// OpenSSH public-key line. Matches what AWS returns from
+    /// `DescribeKeyPairs` for imported keys.
+    fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint>;
 }
 ```
 
@@ -1456,10 +1506,18 @@ kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
 
 ```bash
 cargo nextest run -p kleya-core
-# First run produces .new snapshots; inspect, then accept:
-INSTA_UPDATE=auto cargo nextest run -p kleya-core
 ```
-Expected: PASS.
+
+First run will fail with "snapshot file not found, generated `.snap.new`." Open each `.snap.new` and **read it** — confirm the rendered bash script looks right (zsh setup, ghostty terminfo block present/absent as expected, no template syntax left unrendered). Only after manual review:
+
+```bash
+cargo insta accept --workspace        # or rename .snap.new → .snap by hand
+cargo nextest run -p kleya-core       # now passes
+```
+
+Do NOT use `INSTA_UPDATE=always` in CI or on subsequent runs — it bypasses the review step and lets template regressions land silently.
+
+Expected: PASS after manual snapshot review.
 
 ---
 
@@ -1624,7 +1682,7 @@ use std::sync::Mutex;
 
 use crate::Result;
 use crate::error::Error;
-use crate::model::key::{KeyName, KeyPair, PublicKey};
+use crate::model::key::{Fingerprint, KeyName, KeyPair, PublicKey};
 use crate::ports::key_store::KeyStore;
 
 pub struct InMemoryKeyStore {
@@ -1669,6 +1727,14 @@ impl KeyStore for InMemoryKeyStore {
     fn delete(&self, name: &KeyName) -> Result<()> {
         self.keys.lock().expect("mutex").remove(name);
         Ok(())
+    }
+
+    fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint> {
+        let pub_text = self.read_public(name)?;
+        // In-memory fake: deterministic hash of the public text, not a real MD5.
+        // Real implementation lives in FsKeyStore.
+        let h = crc32fast::hash(pub_text.0.as_bytes());
+        Ok(Fingerprint(format!("fake:{h:08x}")))
     }
 }
 ```
@@ -2081,14 +2147,12 @@ impl LaunchService {
 
     async fn ensure_template(&self, plan: &LaunchPlan) -> Result<()> {
         if self.compute.template_get_by_name(&plan.template).await?.is_some() {
+            self.assert_key_synced(&plan.key_name).await?;
             return Ok(());
         }
         let subnet = self.compute.resolve_default_subnet().await?;
         let sg     = self.compute.ensure_default_security_group("kleya-default").await?;
-        if !self.key_store.exists(&plan.key_name) {
-            let pair = self.key_store.generate(&plan.key_name)?;
-            self.compute.ensure_default_keypair(&plan.key_name, &pair.public).await?;
-        }
+        self.ensure_keypair(&plan.key_name).await?;
         let vars = BootstrapVars::default_with(self.ghostty_tinfo);
         let rendered = render(self.bootstrap_tpl, &vars)?;
         let user_data_b64 = encode_user_data(&rendered)?;
@@ -2112,8 +2176,41 @@ impl LaunchService {
         self.compute.template_create(&spec).await?;
         Ok(())
     }
+
+    async fn ensure_keypair(&self, name: &kleya_core::model::key::KeyName) -> Result<()> {
+        match (self.key_store.exists(name), self.compute.keypair_fingerprint(name).await?) {
+            (true, Some(cloud_fp)) => {
+                let local_fp = self.key_store.fingerprint(name)?.0;
+                if local_fp != cloud_fp {
+                    return Err(crate::error::Error::KeyMismatch { name: name.to_string() });
+                }
+                Ok(())
+            }
+            (true, None) => {
+                let public = self.key_store.read_public(name)?;
+                self.compute.ensure_default_keypair(name, &public).await
+            }
+            (false, Some(_)) => Err(crate::error::Error::KeyOrphaned { name: name.to_string() }),
+            (false, None) => {
+                let pair = self.key_store.generate(name)?;
+                self.compute.ensure_default_keypair(name, &pair.public).await
+            }
+        }
+    }
+
+    async fn assert_key_synced(&self, name: &kleya_core::model::key::KeyName) -> Result<()> {
+        // Lighter-weight check on the existing-template path: verify the local
+        // key is present. Full fingerprint check still runs via ensure_keypair
+        // when a fresh template is created.
+        if !self.key_store.exists(name) {
+            return Err(crate::error::Error::KeyOrphaned { name: name.to_string() });
+        }
+        Ok(())
+    }
 }
 ```
+
+Note the absolute `crate::error::Error` references inside `ensure_keypair`/`assert_key_synced` — these match the existing imports at the top of `commands/launch.rs`. Adjust if the `use` block already brings `Error` into scope.
 
 In `commands/mod.rs` uncomment `pub mod launch;`.
 
@@ -2501,9 +2598,6 @@ async-trait = { workspace = true }
 thiserror  = { workspace = true }
 tokio      = { workspace = true, features = ["macros", "rt", "time"] }
 tracing    = { workspace = true }
-ssh-key    = { workspace = true }
-md-5       = "0.10"
-hex        = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
@@ -2669,7 +2763,9 @@ Expected: PASS.
 - Modify: `crates/kleya-aws/src/ec2.rs`
 - Modify: `crates/kleya-aws/src/mapping.rs`
 
-Implement each `CloudCompute` method using `aws-sdk-ec2`. Sketch (each method ≤ 70 lines):
+Implement each `CloudCompute` method using `aws-sdk-ec2`. Sketch (each method ≤ 70 lines).
+
+> **SDK version-tolerance note:** `aws-sdk-ec2 = "1"` follows a fast release cadence. If a method/type below has been renamed (e.g., `tags()` → `tags`, builder fields, or `InstanceType::from(&str)`), adapt to the current API for whichever 1.x `cargo` resolves — **do not pin to an older minor**. The shapes (`run_instances`, `describe_instances`, `create_launch_template`, `import_key_pair`, etc.) are stable; only call ergonomics drift.
 
 - [ ] **Step 1: `template_create`**
 
@@ -2959,6 +3055,10 @@ use std::sync::OnceLock;
 
 pub const FLOCI_ENDPOINT_ENV: &str = "KLEYA_TEST_FLOCI_ENDPOINT";
 pub const FLOCI_ENABLE_ENV:   &str = "KLEYA_TEST_FLOCI";
+// Pin obtained via:
+//   docker pull floci/floci:latest
+//   docker inspect --format='{{index .RepoDigests 0}}' floci/floci:latest
+// Replace the digest before merging; do not leave REPLACE_WITH_PIN.
 pub const FLOCI_IMAGE:        &str = "floci/floci@sha256:REPLACE_WITH_PIN";
 pub const FLOCI_PORT:         u16  = 4566;
 
@@ -3378,7 +3478,7 @@ pub fn resolved_path(path: Option<&str>) -> Option<String> {
 use std::path::PathBuf;
 use kleya_core::{
     Result,
-    model::key::{KeyName, KeyPair, PublicKey},
+    model::key::{Fingerprint, KeyName, KeyPair, PublicKey},
     ports::key_store::KeyStore,
     config::KeysCfg,
 };
@@ -3404,6 +3504,9 @@ impl KeyStore for FsKeyStore {
     }
     fn exists(&self, name: &KeyName) -> bool { self.dir.join(format!("{name}.pem")).exists() }
     fn delete(&self, _name: &KeyName) -> Result<()> { Ok(()) }
+    fn fingerprint(&self, _name: &KeyName) -> Result<Fingerprint> {
+        Err(kleya_core::Error::ConfigInvalid { reason: "FsKeyStore::fingerprint not yet implemented (Task 20)".into() })
+    }
 }
 ```
 
@@ -3534,12 +3637,20 @@ Expected: PASS.
 
 ---
 
-## Task 20: Filesystem `KeyStore` with Ed25519 + permission assertions
+## Task 20: Filesystem `KeyStore` with Ed25519 + permission assertions + EC2-style fingerprint
 
 **Files:**
 - Modify: `crates/kleya-cli/src/key_store_fs.rs`
+- Modify: `crates/kleya-cli/Cargo.toml` (ensure `md-5`, `hex`, `base64` are listed under `[dependencies]`)
 
-- [ ] **Step 1: Implement Ed25519 generate + read + permission checks**
+Add to `crates/kleya-cli/Cargo.toml` under `[dependencies]` (most already present from Task 18; add `base64` if not):
+```toml
+md-5   = "0.10"
+hex    = "0.4"
+base64 = { workspace = true }
+```
+
+- [ ] **Step 1: Implement Ed25519 generate + read + permission checks + fingerprint**
 
 ```rust
 use std::fs;
@@ -3547,10 +3658,14 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+use md5::{Digest, Md5};
+
 use kleya_core::{
     Error, Result,
     config::KeysCfg,
-    model::key::{KeyName, KeyPair, PublicKey},
+    model::key::{Fingerprint, KeyName, KeyPair, PublicKey},
     ports::key_store::KeyStore,
 };
 use ssh_key::{Algorithm, PrivateKey, rand_core::OsRng};
@@ -3646,6 +3761,48 @@ impl KeyStore for FsKeyStore {
         if p.exists() { fs::remove_file(p)?; }
         Ok(())
     }
+
+    fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint> {
+        let pub_text = self.read_public(name)?;
+        let b64 = pub_text.0.split_whitespace().nth(1).ok_or_else(||
+            Error::ConfigInvalid { reason: format!("malformed openssh public key for {name}") })?;
+        let raw = B64.decode(b64).map_err(|e|
+            Error::ConfigInvalid { reason: format!("base64 decode for {name}: {e}") })?;
+        assert!(!raw.is_empty(), "decoded key body empty");
+        let digest = Md5::digest(&raw);
+        let hexstr = hex::encode(digest);
+        assert_eq!(hexstr.len(), 32, "md5 hex is 32 chars");
+        // Insert ':' between every byte: aa:bb:cc:...
+        let mut out = String::with_capacity(47);
+        for (i, c) in hexstr.chars().enumerate() {
+            if i > 0 && i % 2 == 0 { out.push(':'); }
+            out.push(c);
+        }
+        assert_eq!(out.len(), 47, "colon-formatted fingerprint is 47 chars");
+        Ok(Fingerprint(out))
+    }
+}
+```
+
+- [ ] **Step 1b: Tests for fingerprint determinism and format**
+
+Append to `crates/kleya-cli/tests/key_store_fs.rs`:
+```rust
+#[test]
+fn fingerprint_is_deterministic_and_well_formatted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = kleya_core::config::KeysCfg {
+        dir: tmp.path().display().to_string(),
+        default_key_name: "k".into(),
+    };
+    let store = kleya_cli::key_store_fs::FsKeyStore::from_config(&cfg).unwrap();
+    let name = kleya_core::model::key::KeyName::new("k").unwrap();
+    store.generate(&name).unwrap();
+    let fp1 = store.fingerprint(&name).unwrap().0;
+    let fp2 = store.fingerprint(&name).unwrap().0;
+    assert_eq!(fp1, fp2, "fingerprint must be deterministic");
+    assert_eq!(fp1.len(), 47, "aa:bb:... format is 47 chars");
+    assert!(fp1.chars().filter(|c| *c == ':').count() == 15);
 }
 ```
 
@@ -3720,13 +3877,31 @@ Expected: PASS.
 
 - [ ] **Step 1: Refactor `dispatch::run` to take a builder**
 
-Split `dispatch.rs` into:
-- `dispatch::run(cli)` — production path; builds AWS clients and calls `dispatch::run_with(cli, compute, key_store)`.
-- `dispatch::run_with(cli, Arc<dyn CloudCompute>, Arc<dyn KeyStore>)` — testable.
+Replace the entire contents of `crates/kleya-cli/src/dispatch.rs` with the following. The match arms are the same as Task 18; what changed is that all the wiring is now in `run`, and `run_with` only takes the four resolved pieces (config + region + compute + key_store) as parameters so tests can substitute fakes.
 
 ```rust
+use std::os::unix::process::CommandExt as _;
+use std::process::Command;
+use std::sync::Arc;
+
+use kleya_core::Config;
+use kleya_core::commands::{
+    connect::{ConnectOpts, ConnectService},
+    launch::{LaunchOpts, LaunchService},
+    list::ListService,
+    template::TemplateService,
+    terminate::TerminateService,
+};
+use kleya_core::ports::cloud_compute::CloudCompute;
+use kleya_core::ports::id_gen::AdjAnimalIdGen;
+use kleya_core::ports::key_store::KeyStore;
+
+use crate::clap_args::{Cli, Cmd, ConfigCmd, TemplateCmd};
+use crate::config_loader;
+use crate::key_store_fs::FsKeyStore;
+
 pub async fn run(cli: Cli) -> kleya_core::Result<()> {
-    let config = std::sync::Arc::new(config_loader::load(cli.config.as_deref())?);
+    let config = Arc::new(config_loader::load(cli.config.as_deref())?);
     let region = cli.region.clone().unwrap_or_else(|| config.default_region.clone());
     let ec2 = kleya_aws::client::build_ec2_client(&region, None).await;
     let ssm = {
@@ -3736,32 +3911,127 @@ pub async fn run(cli: Cli) -> kleya_core::Result<()> {
             .load().await;
         aws_sdk_ssm::Client::new(&cfg)
     };
-    let compute: std::sync::Arc<dyn kleya_core::ports::cloud_compute::CloudCompute> =
-        std::sync::Arc::new(kleya_aws::ec2::AwsEc2 {
-            ec2: std::sync::Arc::new(ec2), ssm: std::sync::Arc::new(ssm), region: region.clone(),
-        });
-    let key_store: std::sync::Arc<dyn kleya_core::ports::key_store::KeyStore> =
-        std::sync::Arc::new(key_store_fs::FsKeyStore::from_config(&config.keys)?);
+    let compute: Arc<dyn CloudCompute> = Arc::new(kleya_aws::ec2::AwsEc2 {
+        ec2: Arc::new(ec2), ssm: Arc::new(ssm), region: region.clone(),
+    });
+    let key_store: Arc<dyn KeyStore> = Arc::new(FsKeyStore::from_config(&config.keys)?);
     run_with(cli, config, region, compute, key_store).await
 }
 
 pub async fn run_with(
     cli: Cli,
-    config: std::sync::Arc<kleya_core::Config>,
+    config: Arc<Config>,
     region: String,
-    compute: std::sync::Arc<dyn kleya_core::ports::cloud_compute::CloudCompute>,
-    key_store: std::sync::Arc<dyn kleya_core::ports::key_store::KeyStore>,
+    compute: Arc<dyn CloudCompute>,
+    key_store: Arc<dyn KeyStore>,
 ) -> kleya_core::Result<()> {
-    /* move the existing match expression here, using these params */
-    todo!("paste the existing body from Task 18 here, replacing locals with params")
+    match cli.command {
+        Cmd::Template { action } => match action {
+            TemplateCmd::Create(_) | TemplateCmd::Update(_) => {
+                Err(kleya_core::Error::ConfigInvalid {
+                    reason: "template create/update via CLI deferred to launch flow".into(),
+                })
+            }
+            TemplateCmd::List => {
+                let svc = TemplateService { compute: compute.clone(), config: config.clone() };
+                for t in svc.list().await? {
+                    println!("{}\t{}\tv{}", t.id.0, t.name.0, t.latest_version.0);
+                }
+                Ok(())
+            }
+            TemplateCmd::Delete { name, .. } => {
+                TemplateService { compute, config }
+                    .delete_by_name(&kleya_core::model::template::TemplateName(name)).await
+            }
+        },
+        Cmd::Launch(args) => {
+            let svc = LaunchService {
+                compute,
+                key_store,
+                id_gen: Arc::new(AdjAnimalIdGen),
+                config,
+                bootstrap_tpl: kleya_bootstrap_assets::SETUP_TEMPLATE,
+                ghostty_tinfo: kleya_bootstrap_assets::GHOSTTY_TERMINFO,
+            };
+            let res = svc.run(LaunchOpts {
+                template_name: args.template,
+                instance_name: args.name,
+                dry_run: args.dry_run,
+            }).await?;
+            if let Some(inst) = &res {
+                println!(
+                    "launched: id={} name={} dns={}",
+                    inst.id.as_str(),
+                    inst.name.as_ref().map(|n| n.as_str()).unwrap_or("-"),
+                    inst.public_dns.as_deref().unwrap_or("-"),
+                );
+            }
+            Ok(())
+        }
+        Cmd::List(args) => {
+            let list = ListService { compute }.list_managed().await?;
+            if args.json {
+                let json = serde_json::to_string_pretty(&list).map_err(|e|
+                    kleya_core::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                println!("{json}");
+            } else {
+                for i in list {
+                    println!("{}\t{}\t{:?}\t{}",
+                        i.id.as_str(),
+                        i.name.as_ref().map(|n| n.as_str()).unwrap_or("-"),
+                        i.state,
+                        i.public_dns.unwrap_or_else(|| "-".into()));
+                }
+            }
+            Ok(())
+        }
+        Cmd::Connect(args) => {
+            let svc = ConnectService { compute, key_store, config, region };
+            let plan = svc.plan(&ConnectOpts {
+                handle: args.name,
+                explicit_instance_id: args.instance_id,
+                no_tmux: args.no_tmux,
+                tmux_session: args.tmux_session,
+            }).await?;
+            if args.print {
+                println!("{}", shell_quote(&plan.argv));
+                return Ok(());
+            }
+            let err = Command::new(&plan.argv[0]).args(&plan.argv[1..]).exec();
+            Err(kleya_core::Error::Io(err))
+        }
+        Cmd::Terminate(args) => {
+            TerminateService { compute, region: region.clone() }
+                .terminate_by_handle(&args.name).await.map(|_| ())
+        }
+        Cmd::Config { action } => match action {
+            ConfigCmd::Show => {
+                let s = toml::to_string_pretty(&*config).map_err(|e|
+                    kleya_core::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                println!("{s}");
+                Ok(())
+            }
+            ConfigCmd::Path => {
+                println!("{}", config_loader::resolved_path(cli.config.as_deref())
+                    .unwrap_or_else(|| "<defaults; no file loaded>".into()));
+                Ok(())
+            }
+        },
+    }
+}
+
+fn shell_quote(argv: &[String]) -> String {
+    argv.iter().map(|s| {
+        if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_/.@=:".contains(c)) {
+            s.clone()
+        } else {
+            format!("'{}'", s.replace('\'', r"'\''"))
+        }
+    }).collect::<Vec<_>>().join(" ")
 }
 ```
 
-When pasting, replace:
-- `let config = Arc::new(...)` etc. with the function parameters.
-- Move `let region = ...` out (already a parameter).
-
-(The explicit `todo!()` is shown for clarity; in real code, replace with the moved body. No `todo!()` remains in committed source.)
+No `todo!()` should remain in committed source.
 
 - [ ] **Step 2: Smoke test**
 
