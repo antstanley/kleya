@@ -76,8 +76,16 @@ pub trait CloudCompute: Send + Sync {
     async fn ensure_default_template(&self, spec: &TemplateSpec) -> Result<TemplateId>;
     async fn resolve_default_subnet(&self) -> Result<SubnetId>;
     async fn resolve_ami_alias(&self, alias: &str) -> Result<AmiId>;
+
+    /// Fingerprint as returned by the provider for the registered key, or
+    /// `None` if the provider has no record. The format is provider- and
+    /// algorithm-specific; callers compare via [`KeyStore::fingerprint`]
+    /// which derives the matching value locally.
+    async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>>;
 }
 ```
+
+**Idempotency under concurrent invocations:** all `ensure_default_*` methods must treat provider-side "already exists" errors (e.g., EC2 `InvalidGroup.Duplicate`, `InvalidKeyPair.Duplicate`) as success after a follow-up `Describe*` confirms the existing resource matches. The adapter handles this; `kleya-core` orchestration does not retry.
 
 Core types (`InstanceId`, `TemplateId`, `KeyName`, etc.) are newtypes around `String` or `[u8; N]` with constructor validation — invalid values cannot be constructed, satisfying "make invalid states unrepresentable."
 
@@ -108,7 +116,7 @@ Global flags: `--config <path>`, `--profile <aws-profile>`, `--region <r>`, `-v/
 **Precedence (highest wins):**
 
 1. CLI flag.
-2. Environment variable (`KLEYA_*`, plus `AWS_REGION`, `AWS_PROFILE`).
+2. Environment variable. The CLI honours `KLEYA_REGION`, `KLEYA_PROFILE`, `KLEYA_CONFIG`, `KLEYA_LOG_FORMAT`, and the standard AWS SDK variables (`AWS_REGION`, `AWS_PROFILE`, etc.). No other `KLEYA_*` names are read.
 3. `--config <path>` file.
 4. `~/.config/kleya/config.{toml,yaml,yml,json,jsonc}` (first match wins).
 5. Built-in defaults.
@@ -137,6 +145,7 @@ extra_args = ["-o", "ServerAliveInterval=30"]
 
 [keys]
 dir = "~/.config/kleya/keys"                  # 0700; pem files 0600
+default_key_name = "kleya-default"            # used when an instance has no `kleya:key` tag
 
 [[templates]]
 name = "devbox"
@@ -184,10 +193,15 @@ Every option has a fallback so `kleya launch` with no flags or config file launc
 **Bootstrap-the-bootstrap flow** (first run on a clean account):
 
 1. Resolve region.
-2. Lookup default VPC → choose subnet via `resolve_default_subnet()`.
+2. Lookup default VPC → choose subnet via `resolve_default_subnet()`. When the default VPC has multiple subnets, pick the **lexicographically first by AZ name** so the choice is deterministic across runs.
 3. `ensure_default_security_group("kleya-default")` — idempotent.
-4. `ensure_default_keypair(...)` — generates locally + imports if missing.
-5. `ensure_default_template(...)` — creates the `default` template if missing.
+4. **Keypair, two steps** (no silent fallthrough; see §9 lifecycle table):
+   1. `KeyStore::generate(name)` (skipped if the local pem already exists).
+   2. `CloudCompute::ensure_default_keypair(name, public_key)` to register the public half with the provider.
+5. **Render and encode user-data**, then `ensure_default_template(...)` with the resulting `TemplateSpec`:
+   1. `bootstrap::render(&BootstrapVars{ … })` — pure, returns the rendered shell script.
+   2. `bootstrap::encode(&rendered)` — gzip + base64; size checks happen here.
+   3. `CloudCompute::ensure_default_template(spec)` creates the `default` template if missing.
 6. `instance_launch(...)` tagged with at minimum:
    - `Name=<generated-or-supplied>`
    - `kleya:managed=true`
@@ -195,6 +209,8 @@ Every option has a fallback so `kleya launch` with no flags or config file launc
    - `kleya:key=<key-name>`
 
    plus any user-defined tags from `[[templates.tags]]`. The `kleya:template` and `kleya:key` tags are what lets `connect` resolve the right private key path without a local state file (a managed instance carries its own metadata).
+
+   **Tag-match semantics:** when filtering by `kleya:managed`, the match is on **key AND value** (`tag:kleya:managed=true`). A tag with key `kleya:managed` and value other than `true` is not a managed instance.
 
 Each step is a single, idempotent method on `CloudCompute`, so the orchestration is a straight-line sequence in `kleya-core/src/commands/launch.rs` — no nested conditionals.
 
@@ -252,12 +268,13 @@ rm /tmp/ghostty.terminfo
 {% endif %}
 ```
 
-**Size budget:** EC2 user-data is capped at 16 KiB raw. After rendering, `kleya-core` gzip-compresses and base64-encodes the script (EC2 accepts gzip user-data — first bytes are the gzip magic). Two named consts:
+**Size budget.** EC2's documented limit is **16 KiB on the user-data in its raw form, before base64 encoding**; cloud-init also accepts gzip-compressed user-data (detected by the gzip magic bytes). After rendering, `kleya-core` gzip-compresses the script, then base64-encodes for the wire. The 16 KiB cap therefore applies to whichever of (raw script) or (gzipped script) ends up at the API as user-data:
 
-- `USER_DATA_RAW_BYTES_MAX = 16_384` — asserted on rendered output before compression.
-- `USER_DATA_ENCODED_BYTES_MAX = 16_384` — asserted post-encoding (EC2 enforces this on the wire).
+- `USER_DATA_RAW_BYTES_MAX = 16_384` — asserted on the rendered output. This is the conservative upper bound when the operator opts out of compression (e.g., `--user-data <path>` overriding the embedded template with a script the operator wants delivered verbatim).
+- `USER_DATA_GZIP_BYTES_MAX = 16_384` — asserted on the gzipped bytes for the default (compressed) path. EC2 stores these bytes directly; this is the operative limit when gzip is in use.
+- `USER_DATA_BASE64_BYTES_MAX = 21_848` — sanity bound on the base64-encoded form (4/3 × 16_384, rounded up). Used only as a defensive `debug_assert!`; not an EC2-enforced limit, since base64 is the transport encoding and EC2 measures the decoded bytes.
 
-Both checks happen in `kleya-core` before the adapter is called. Negative-space test: padding `extra_post_lines` past the limit must return `Error::UserDataTooLarge { bytes, max }`.
+The compressed path requires either `USER_DATA_GZIP_BYTES_MAX` to hold; the uncompressed path requires `USER_DATA_RAW_BYTES_MAX` to hold. Both checks happen in `kleya-core` before the adapter is called. Negative-space test: padding `extra_post_lines` past the operative limit must return `Error::UserDataTooLarge { bytes, max }`.
 
 **Override semantics** (`bootstrap.user_data_path` in config or `--user-data <path>`):
 
@@ -333,12 +350,19 @@ pub trait KeyStore: Send + Sync {
     fn private_path(&self, name: &KeyName) -> Result<PathBuf>;
     fn exists(&self, name: &KeyName) -> bool;
     fn delete(&self, name: &KeyName) -> Result<()>;
+
+    /// Compute the local fingerprint of the *public* key. The returned
+    /// `Fingerprint` must equal the value the provider returns from its
+    /// equivalent operation (`CloudCompute::keypair_fingerprint`).
+    fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint>;
 }
 ```
 
 Default implementation: `ssh-key` crate, **Ed25519**, OpenSSH format, `dir = ~/.config/kleya/keys`.
 
-**`KeyName` newtype** — validated at construction (`^[a-zA-Z0-9_.-]{1,128}$`). The regex is the intersection of EC2 key-pair naming rules and POSIX-portable filename characters; reject anything else at the boundary so the `<KeyName>.pem` path is always safe to write.
+**`KeyName` newtype** — validated at construction (`^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$`, max 128 chars). The leading-character class excludes `.` so `KeyName + ".pem"` cannot produce a hidden file or a path-traversal segment; the trailing class allows `.` for names like `kleya.v2`. The regex is the intersection of EC2 key-pair naming rules and POSIX-portable filename characters; reject anything else at the boundary so the `<KeyName>.pem` path is always safe to write.
+
+**Fingerprint algorithm.** EC2 returns, for keys created via `ImportKeyPair`, the **MD5 of the DER-encoded `SubjectPublicKeyInfo`** of the imported public key, formatted as colon-separated lowercase hex (`aa:bb:cc:…`). The same algorithm applies to RSA and Ed25519 imports — the format does *not* change per algorithm. The local `KeyStore::fingerprint` impl must compute MD5 over the same DER SPKI bytes (use `ssh_key::PublicKey::to_pkcs8_der`, hash with `md-5`, format with `:` between bytes). It is **not** correct to MD5 the OpenSSH wire-format body (the bytes between `ssh-ed25519 ` and the comment) — those bytes differ from the DER SPKI and will not match what AWS returns.
 
 **Keypair lifecycle** — no silent fallthrough:
 
@@ -413,7 +437,8 @@ All in `kleya-core/src/limits.rs`. No magic numbers elsewhere in the workspace; 
 ```rust
 pub const CONFIG_BYTES_MAX: usize            = 256 * 1024;
 pub const USER_DATA_RAW_BYTES_MAX: usize     = 16 * 1024;
-pub const USER_DATA_ENCODED_BYTES_MAX: usize = 16 * 1024;
+pub const USER_DATA_GZIP_BYTES_MAX: usize    = 16 * 1024;
+pub const USER_DATA_BASE64_BYTES_MAX: usize  = 21_848;       // 4/3 × RAW, rounded up
 pub const TEMPLATES_COUNT_MAX: usize         = 64;
 pub const TAGS_PER_TEMPLATE_MAX: usize       = 50;
 pub const TAG_KEY_BYTES_MAX: usize           = 128;
@@ -490,6 +515,8 @@ Every limit boundary is tested at `value-1`, `value`, and `value+1`.
 - Non-AWS providers (the port exists; implementations come in later specs).
 - Cost reporting.
 - WireGuard / mesh networking (mentioned in the broader guidelines but not in this CLI's scope).
+- China and GovCloud regions. The `Region` newtype regex `^[a-z]{2}-[a-z]+-[0-9]+$` accepts only the commercial `<two>-<word>-<digit>` form. Operators in `cn-*` or `us-gov-*` must lift the regex in a later spec.
+- Automatic cleanup of pre-existing launch templates. If the operator already has a launch template named `devbox` (or anything other than `default`), the zero-config path creates a parallel `default` template; it does not migrate, rename, or delete the existing one.
 
 ## 17. Assumptions
 

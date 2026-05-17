@@ -298,7 +298,8 @@ In `crates/kleya-core/src/limits.rs`:
 
 pub const CONFIG_BYTES_MAX: usize            = 256 * 1024;
 pub const USER_DATA_RAW_BYTES_MAX: usize     = 16 * 1024;
-pub const USER_DATA_ENCODED_BYTES_MAX: usize = 16 * 1024;
+pub const USER_DATA_GZIP_BYTES_MAX: usize    = 16 * 1024;
+pub const USER_DATA_BASE64_BYTES_MAX: usize  = 21_848;
 pub const TEMPLATES_COUNT_MAX: usize         = 64;
 pub const TAGS_PER_TEMPLATE_MAX: usize       = 50;
 pub const TAG_KEY_BYTES_MAX: usize           = 128;
@@ -319,7 +320,8 @@ pub const AWS_RETRY_BACKOFF_CAP_MS: u32      = 5_000;
 const _: () = assert!(LAUNCH_POLL_INTERVAL_SECONDS <= LAUNCH_WAIT_SECONDS_MAX);
 const _: () = assert!(SSH_PROBE_INTERVAL_SECONDS <= SSH_PROBE_TIMEOUT_SECONDS);
 const _: () = assert!(AWS_RETRY_BACKOFF_BASE_MS <= AWS_RETRY_BACKOFF_CAP_MS);
-const _: () = assert!(USER_DATA_RAW_BYTES_MAX <= USER_DATA_ENCODED_BYTES_MAX);
+const _: () = assert!(USER_DATA_GZIP_BYTES_MAX <= USER_DATA_RAW_BYTES_MAX);
+const _: () = assert!(USER_DATA_BASE64_BYTES_MAX >= USER_DATA_RAW_BYTES_MAX);
 const _: () = assert!(TAG_KEY_BYTES_MAX > 0 && TAG_VALUE_BYTES_MAX > 0);
 
 #[cfg(test)]
@@ -329,7 +331,8 @@ mod tests {
     #[test]
     fn user_data_limits_are_aws_compatible() {
         assert_eq!(USER_DATA_RAW_BYTES_MAX, 16_384);
-        assert_eq!(USER_DATA_ENCODED_BYTES_MAX, 16_384);
+        assert_eq!(USER_DATA_GZIP_BYTES_MAX, 16_384);
+        assert_eq!(USER_DATA_BASE64_BYTES_MAX, 21_848);
     }
 
     #[test]
@@ -689,8 +692,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-static KEY_NAME_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[A-Za-z0-9_.-]{1,128}$").expect("static regex compiles"));
+static KEY_NAME_RE: Lazy<Regex> = Lazy::new(|| {
+    // Leading char excludes '.' to prevent hidden-file or traversal segments.
+    Regex::new(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$").expect("static regex compiles")
+});
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct KeyName(String);
@@ -708,7 +713,7 @@ impl KeyName {
         }
         if !KEY_NAME_RE.is_match(&raw) {
             return Err(Error::ConfigInvalid {
-                reason: format!("key name '{raw}' must match ^[A-Za-z0-9_.-]{{1,128}}$"),
+                reason: format!("key name '{raw}' must match ^[A-Za-z0-9_-][A-Za-z0-9_.-]{{0,127}}$"),
             });
         }
         Ok(Self(raw))
@@ -749,6 +754,12 @@ mod tests {
         assert!(KeyName::new("../oops").is_err());
         assert!(KeyName::new("foo/bar").is_err());
         assert!(KeyName::new("foo bar").is_err());
+    }
+
+    #[test] fn rejects_leading_dot() {
+        assert!(KeyName::new(".").is_err());
+        assert!(KeyName::new("..").is_err());
+        assert!(KeyName::new(".hidden").is_err());
     }
 }
 ```
@@ -1006,6 +1017,7 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         Region::new(&self.default_region)?;
+        KeyName::new(&self.keys.default_key_name)?;
         if self.templates.len() > TEMPLATES_COUNT_MAX {
             return Err(Error::ConfigInvalid {
                 reason: format!("too many templates: {} > {TEMPLATES_COUNT_MAX}", self.templates.len()),
@@ -1119,7 +1131,7 @@ use async_trait::async_trait;
 use crate::Result;
 use crate::model::{
     instance::{Instance, InstanceFilter, InstanceId},
-    key::{KeyName, PublicKey},
+    key::{Fingerprint, KeyName, PublicKey},
     launch::{Deadline, LaunchRequest},
     region::{AmiId, SecurityGroupId, SubnetId},
     template::{TemplateId, TemplateName, TemplateSpec, TemplateSummary, TemplateVersion},
@@ -1141,7 +1153,7 @@ pub trait CloudCompute: Send + Sync {
 
     async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId>;
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()>;
-    async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<String>>;
+    async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>>;
     async fn resolve_default_subnet(&self) -> Result<SubnetId>;
     async fn resolve_ami_alias(&self, alias: &str) -> Result<AmiId>;
 }
@@ -1544,21 +1556,27 @@ use flate2::write::GzEncoder;
 use std::io::Write as _;
 
 use crate::error::{Error, Result};
-use crate::limits::{USER_DATA_ENCODED_BYTES_MAX, USER_DATA_RAW_BYTES_MAX};
+use crate::limits::{
+    USER_DATA_BASE64_BYTES_MAX, USER_DATA_GZIP_BYTES_MAX, USER_DATA_RAW_BYTES_MAX,
+};
 
 pub fn encode_user_data(raw: &str) -> Result<String> {
     assert!(!raw.is_empty(), "encode_user_data called with empty raw");
     let raw_bytes = raw.len();
-    if raw_bytes > USER_DATA_RAW_BYTES_MAX {
-        return Err(Error::UserDataTooLarge { bytes: raw_bytes, max: USER_DATA_RAW_BYTES_MAX });
+    // Raw cap is an upper bound for the uncompressed path; allow a generous
+    // headroom on the rendered script because gzip will absorb most of it.
+    if raw_bytes > USER_DATA_RAW_BYTES_MAX * 4 {
+        return Err(Error::UserDataTooLarge { bytes: raw_bytes, max: USER_DATA_RAW_BYTES_MAX * 4 });
     }
     let mut enc = GzEncoder::new(Vec::with_capacity(raw_bytes), Compression::best());
     enc.write_all(raw.as_bytes())?;
     let gz = enc.finish()?;
-    let b64 = B64.encode(&gz);
-    if b64.len() > USER_DATA_ENCODED_BYTES_MAX {
-        return Err(Error::UserDataTooLarge { bytes: b64.len(), max: USER_DATA_ENCODED_BYTES_MAX });
+    if gz.len() > USER_DATA_GZIP_BYTES_MAX {
+        return Err(Error::UserDataTooLarge { bytes: gz.len(), max: USER_DATA_GZIP_BYTES_MAX });
     }
+    let b64 = B64.encode(&gz);
+    debug_assert!(b64.len() <= USER_DATA_BASE64_BYTES_MAX,
+        "base64 of gzipped data must respect the derived ceiling");
     assert!(!b64.is_empty(), "encoded output empty");
     Ok(b64)
 }
@@ -1573,7 +1591,8 @@ mod tests {
     }
 
     #[test] fn rejects_oversize_raw_input() {
-        let big = "x".repeat(USER_DATA_RAW_BYTES_MAX + 1);
+        // 4×RAW is the hard input ceiling; one byte past it must fail.
+        let big = "x".repeat(USER_DATA_RAW_BYTES_MAX * 4 + 1);
         let err = encode_user_data(&big).unwrap_err();
         assert!(matches!(err, Error::UserDataTooLarge { .. }));
     }
@@ -1581,6 +1600,18 @@ mod tests {
     #[test] fn boundary_at_raw_max_succeeds() {
         let at = "x".repeat(USER_DATA_RAW_BYTES_MAX);
         assert!(encode_user_data(&at).is_ok());
+    }
+
+    #[test] fn rejects_when_gzip_exceeds_cap() {
+        // High-entropy input does not compress, so 16 KiB + a few bytes of
+        // uncompressible data must exceed USER_DATA_GZIP_BYTES_MAX even after gzip.
+        let mut rng_like = String::with_capacity(USER_DATA_GZIP_BYTES_MAX + 2_048);
+        for i in 0..(USER_DATA_GZIP_BYTES_MAX + 2_048) {
+            // Pseudo-random-ish bytes that won't run-length compress.
+            rng_like.push(char::from_u32(33 + (i as u32 * 2_654_435_761) % 90).unwrap_or('x'));
+        }
+        let err = encode_user_data(&rng_like).unwrap_err();
+        assert!(matches!(err, Error::UserDataTooLarge { .. }));
     }
 }
 ```
@@ -1730,11 +1761,12 @@ impl KeyStore for InMemoryKeyStore {
     }
 
     fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint> {
+        // In-memory fake — must produce the same string that InMemoryCompute
+        // stores in `ensure_default_keypair`, otherwise tests that go through
+        // LaunchService::ensure_keypair will see KeyMismatch.
         let pub_text = self.read_public(name)?;
-        // In-memory fake: deterministic hash of the public text, not a real MD5.
-        // Real implementation lives in FsKeyStore.
         let h = crc32fast::hash(pub_text.0.as_bytes());
-        Ok(Fingerprint(format!("fake:{h:08x}")))
+        Ok(Fingerprint(format!("fake-md5:{h:08x}")))
     }
 }
 ```
@@ -1750,7 +1782,7 @@ use crate::Result;
 use crate::error::Error;
 use crate::model::{
     instance::{Instance, InstanceFilter, InstanceId, InstanceState, InstanceName},
-    key::{KeyName, PublicKey},
+    key::{Fingerprint, KeyName, PublicKey},
     launch::{Deadline, LaunchRequest},
     region::{AmiId, SecurityGroupId, SubnetId},
     tag::{Tag, KLEYA_TAG_KEY, KLEYA_TAG_MANAGED, KLEYA_TAG_NAME, KLEYA_TAG_TEMPLATE},
@@ -1892,14 +1924,18 @@ impl CloudCompute for InMemoryCompute {
     }
 
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()> {
+        // Format must match InMemoryKeyStore::fingerprint so LaunchService
+        // ensure_keypair sees a match for the same PublicKey.
         let mut s = self.state.lock().expect("mutex");
         s.keypairs.entry(name.clone())
-            .or_insert(format!("md5:{:x}", crc32fast::hash(public_key.0.as_bytes())));
+            .or_insert_with(|| format!("fake-md5:{:08x}",
+                crc32fast::hash(public_key.0.as_bytes())));
         Ok(())
     }
 
-    async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<String>> {
-        Ok(self.state.lock().expect("mutex").keypairs.get(name).cloned())
+    async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>> {
+        Ok(self.state.lock().expect("mutex").keypairs.get(name)
+            .cloned().map(Fingerprint))
     }
 
     async fn resolve_default_subnet(&self) -> Result<SubnetId> { Ok(self.default_subnet.clone()) }
@@ -2177,10 +2213,10 @@ impl LaunchService {
         Ok(())
     }
 
-    async fn ensure_keypair(&self, name: &kleya_core::model::key::KeyName) -> Result<()> {
+    async fn ensure_keypair(&self, name: &crate::model::key::KeyName) -> Result<()> {
         match (self.key_store.exists(name), self.compute.keypair_fingerprint(name).await?) {
             (true, Some(cloud_fp)) => {
-                let local_fp = self.key_store.fingerprint(name)?.0;
+                let local_fp = self.key_store.fingerprint(name)?;
                 if local_fp != cloud_fp {
                     return Err(crate::error::Error::KeyMismatch { name: name.to_string() });
                 }
@@ -2198,7 +2234,7 @@ impl LaunchService {
         }
     }
 
-    async fn assert_key_synced(&self, name: &kleya_core::model::key::KeyName) -> Result<()> {
+    async fn assert_key_synced(&self, name: &crate::model::key::KeyName) -> Result<()> {
         // Lighter-weight check on the existing-template path: verify the local
         // key is present. Full fingerprint check still runs via ensure_keypair
         // when a fresh template is created.
@@ -2698,7 +2734,7 @@ use aws_sdk_ssm::Client as SsmClient;
 use kleya_core::Result;
 use kleya_core::model::{
     instance::{Instance, InstanceFilter, InstanceId},
-    key::{KeyName, PublicKey},
+    key::{Fingerprint, KeyName, PublicKey},
     launch::{Deadline, LaunchRequest},
     region::{AmiId, SecurityGroupId, SubnetId},
     template::{TemplateId, TemplateName, TemplateSpec, TemplateSummary, TemplateVersion},
@@ -2737,7 +2773,7 @@ impl CloudCompute for AwsEc2 {
         Err(kleya_core::Error::ConfigInvalid { reason: "not implemented (Task 16)".into() })
     }
     async fn ensure_default_keypair(&self, _name: &KeyName, _public_key: &PublicKey) -> Result<()> { Ok(()) }
-    async fn keypair_fingerprint(&self, _name: &KeyName) -> Result<Option<String>> { Ok(None) }
+    async fn keypair_fingerprint(&self, _name: &KeyName) -> Result<Option<Fingerprint>> { Ok(None) }
     async fn resolve_default_subnet(&self) -> Result<SubnetId> {
         Err(kleya_core::Error::ConfigInvalid { reason: "not implemented (Task 16)".into() })
     }
@@ -2955,8 +2991,10 @@ async fn instance_wait_running(&self, id: &InstanceId, deadline: Deadline) -> Re
 ```rust
 async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId> {
     use aws_sdk_ec2::types as e;
-    let q = self.ec2.describe_security_groups().group_names(name).send().await;
-    if let Ok(out) = q {
+    // Read-then-write race: another invocation may create the SG between our
+    // Describe and Create. Treat `InvalidGroup.Duplicate` as success, then
+    // re-describe to recover the canonical id.
+    if let Ok(out) = self.ec2.describe_security_groups().group_names(name).send().await {
         if let Some(g) = out.security_groups().first() {
             if let Some(id) = g.group_id() {
                 return Ok(SecurityGroupId(id.to_string()));
@@ -2966,15 +3004,36 @@ async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGrou
     let created = self.ec2.create_security_group()
         .group_name(name)
         .description("kleya managed default SG")
-        .send().await.map_err(|e| crate::error::AwsError::Sdk(Box::new(e)))?;
-    let id = created.group_id().ok_or(crate::error::AwsError::MissingField("group_id"))?.to_string();
-    self.ec2.authorize_security_group_ingress()
+        .send().await;
+    let id = match created {
+        Ok(out) => out.group_id()
+            .ok_or(crate::error::AwsError::MissingField("group_id"))?.to_string(),
+        Err(err) => {
+            let msg = format!("{err}");
+            if msg.contains("InvalidGroup.Duplicate") {
+                let again = self.ec2.describe_security_groups().group_names(name)
+                    .send().await.map_err(|e| crate::error::AwsError::Sdk(Box::new(e)))?;
+                again.security_groups().first().and_then(|g| g.group_id())
+                    .ok_or(crate::error::AwsError::MissingField("group_id"))?.to_string()
+            } else {
+                return Err(crate::error::AwsError::Sdk(Box::new(err)).into());
+            }
+        }
+    };
+    // Authorize 22/tcp; ignore `InvalidPermission.Duplicate`.
+    let auth = self.ec2.authorize_security_group_ingress()
         .group_id(&id)
         .ip_permissions(e::IpPermission::builder()
             .ip_protocol("tcp").from_port(22).to_port(22)
             .ip_ranges(e::IpRange::builder().cidr_ip("0.0.0.0/0").build())
             .build())
-        .send().await.map_err(|e| crate::error::AwsError::Sdk(Box::new(e)))?;
+        .send().await;
+    if let Err(err) = auth {
+        let msg = format!("{err}");
+        if !msg.contains("InvalidPermission.Duplicate") {
+            return Err(crate::error::AwsError::Sdk(Box::new(err)).into());
+        }
+    }
     Ok(SecurityGroupId(id))
 }
 
@@ -2982,17 +3041,27 @@ async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -
     if let Ok(out) = self.ec2.describe_key_pairs().key_names(name.as_str()).send().await {
         if !out.key_pairs().is_empty() { return Ok(()); }
     }
-    self.ec2.import_key_pair()
+    let res = self.ec2.import_key_pair()
         .key_name(name.as_str())
         .public_key_material(aws_sdk_ec2::primitives::Blob::new(public_key.0.as_bytes()))
-        .send().await.map_err(|e| crate::error::AwsError::Sdk(Box::new(e)))?;
+        .send().await;
+    if let Err(err) = res {
+        let msg = format!("{err}");
+        // Concurrent import: another caller registered the same name. Treat
+        // as success — the fingerprint check happens upstream.
+        if !msg.contains("InvalidKeyPair.Duplicate") {
+            return Err(crate::error::AwsError::Sdk(Box::new(err)).into());
+        }
+    }
     Ok(())
 }
 
-async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<String>> {
+async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<kleya_core::model::key::Fingerprint>> {
     let out = self.ec2.describe_key_pairs().key_names(name.as_str()).send().await;
     let Ok(out) = out else { return Ok(None); };
-    Ok(out.key_pairs().first().and_then(|k| k.key_fingerprint()).map(str::to_string))
+    Ok(out.key_pairs().first()
+        .and_then(|k| k.key_fingerprint())
+        .map(|s| kleya_core::model::key::Fingerprint(s.to_string())))
 }
 
 async fn resolve_default_subnet(&self) -> Result<SubnetId> {
@@ -3007,7 +3076,18 @@ async fn resolve_default_subnet(&self) -> Result<SubnetId> {
     let subs = self.ec2.describe_subnets()
         .filters(e::Filter::builder().name("vpc-id").values(vpc_id).build())
         .send().await.map_err(|e| crate::error::AwsError::Sdk(Box::new(e)))?;
-    let id = subs.subnets().first().and_then(|s| s.subnet_id())
+    // Deterministic tie-breaker: pick the subnet whose availability_zone
+    // sorts first lexicographically (e.g., eu-west-1a beats eu-west-1b).
+    let mut picked: Option<&e::Subnet> = None;
+    for s in subs.subnets() {
+        match (picked, s.availability_zone()) {
+            (None, Some(_))                       => picked = Some(s),
+            (Some(cur), Some(az))
+                if az < cur.availability_zone().unwrap_or("") => picked = Some(s),
+            _ => {}
+        }
+    }
+    let id = picked.and_then(|s| s.subnet_id())
         .ok_or_else(|| kleya_core::Error::ConfigInvalid {
             reason: format!("no subnet in default VPC of region {}", self.region),
         })?;
@@ -3763,16 +3843,24 @@ impl KeyStore for FsKeyStore {
     }
 
     fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint> {
-        let pub_text = self.read_public(name)?;
-        let b64 = pub_text.0.split_whitespace().nth(1).ok_or_else(||
-            Error::ConfigInvalid { reason: format!("malformed openssh public key for {name}") })?;
-        let raw = B64.decode(b64).map_err(|e|
-            Error::ConfigInvalid { reason: format!("base64 decode for {name}: {e}") })?;
-        assert!(!raw.is_empty(), "decoded key body empty");
-        let digest = Md5::digest(&raw);
+        // EC2 returns, for keys created via ImportKeyPair, the MD5 of the
+        // DER-encoded SubjectPublicKeyInfo formatted as colon-separated
+        // lowercase hex. The format is identical for RSA and Ed25519.
+        // Hashing the OpenSSH wire-format body would NOT match — those bytes
+        // are not the same as the DER SPKI.
+        let path = self.path_for(name);
+        self.assert_file_mode(&path)?;
+        let text = fs::read_to_string(&path)?;
+        let priv_key = ssh_key::PrivateKey::from_openssh(&text)
+            .map_err(|e| Error::ConfigInvalid { reason: format!("openssh: {e}") })?;
+        let der = priv_key.public_key()
+            .to_pkcs8_der()
+            .map_err(|e| Error::ConfigInvalid { reason: format!("pkcs8 der: {e}") })?;
+        let bytes: &[u8] = der.as_bytes();
+        assert!(!bytes.is_empty(), "der spki is non-empty");
+        let digest = Md5::digest(bytes);
         let hexstr = hex::encode(digest);
         assert_eq!(hexstr.len(), 32, "md5 hex is 32 chars");
-        // Insert ':' between every byte: aa:bb:cc:...
         let mut out = String::with_capacity(47);
         for (i, c) in hexstr.chars().enumerate() {
             if i > 0 && i % 2 == 0 { out.push(':'); }
@@ -3783,6 +3871,8 @@ impl KeyStore for FsKeyStore {
     }
 }
 ```
+
+> **Verification step before merging Task 20:** import a known Ed25519 public key via `aws ec2 import-key-pair --key-name kleya-fp-probe --public-key-material fileb://test.pub` (or via Floci), call `aws ec2 describe-key-pairs --key-names kleya-fp-probe --query 'KeyPairs[0].KeyFingerprint'`, and confirm the returned colon-MD5 matches what `FsKeyStore::fingerprint` computes for the same key file. If they differ, the algorithm has shifted — investigate before continuing, do not silently change the comparison.
 
 - [ ] **Step 1b: Tests for fingerprint determinism and format**
 
