@@ -50,3 +50,33 @@ ssh-key = { version = "0.6", features = ["ed25519", "encryption", "getrandom"] }
 nix = { version = "0.29", features = ["fs", "user", "process"] }
 proptest = "1"
 insta = "1"
+
+# Config for `cargo dist`.
+#
+# NOTE: `dist generate` regenerates `.github/workflows/release.yml` from this
+# config and uses unpinned action refs (e.g. `actions/checkout@v6`). After every
+# `dist generate`, re-apply the SHA pins documented in ci.yml so release.yml
+# stays consistent with our supply-chain policy.
+[workspace.metadata.dist]
+# Bump in lockstep with the installed `dist` binary.
+cargo-dist-version = "0.31.0"
+ci = "github"
+# `plan` on PRs/main pushes runs the matrix in dry-run mode; tag pushes
+# (v*.*.*) build real artifacts and draft a Release.
+pr-run-mode = "plan"
+# Unix-only — kleya uses std::os::unix::process::CommandExt::exec.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# `curl -fsSL <release-url>/install.sh | sh`
+installers = ["shell"]
+
+# Profile that `dist` builds release artifacts with.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
