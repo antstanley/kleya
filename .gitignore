@@ -1,0 +1,5 @@
+/target
+**/*.rs.bk
+.private/
+.envrc
+.DS_Store

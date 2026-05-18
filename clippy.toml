@@ -1,0 +1,9 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+disallowed-methods = [
+    { path = "std::result::Result::unwrap",  reason = "use ? or explicit handling" },
+    { path = "std::option::Option::unwrap",  reason = "use ? or explicit handling" },
+    { path = "std::result::Result::expect",  reason = "use ? or explicit handling" },
+    { path = "std::option::Option::expect",  reason = "use ? or explicit handling" },
+]
