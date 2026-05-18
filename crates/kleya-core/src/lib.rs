@@ -2,4 +2,7 @@
 //!
 //! This crate is free of I/O and provider SDKs. Adapters live in sibling crates.
 
+pub mod error;
 pub mod limits;
+
+pub use error::{Error, Result};
