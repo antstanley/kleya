@@ -45,7 +45,7 @@ flate2 = "1"
 base64 = "0.22"
 regex = "1"
 once_cell = "1"
-ssh-key = { version = "0.6", features = ["ed25519", "encryption"] }
+ssh-key = { version = "0.6", features = ["ed25519", "encryption", "getrandom"] }
 nix = { version = "0.29", features = ["fs", "user", "process"] }
 proptest = "1"
 insta = "1"
