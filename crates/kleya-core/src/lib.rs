@@ -9,8 +9,10 @@
     clippy::non_std_lazy_statics
 )]
 
+pub mod config;
 pub mod error;
 pub mod limits;
 pub mod model;
 
+pub use config::Config;
 pub use error::{Error, Result};
