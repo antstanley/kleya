@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use kleya_core::commands::launch::{LaunchOpts, LaunchService};
+use kleya_core::commands::list::ListService;
 use kleya_core::commands::template::TemplateService;
+use kleya_core::commands::terminate::TerminateService;
 use kleya_core::config::Config;
 use kleya_core::model::{
     key::KeyName,
@@ -107,4 +109,73 @@ async fn launch_dry_run_returns_none_and_does_not_create_template() {
     assert!(res.is_none());
     use kleya_core::ports::cloud_compute::CloudCompute;
     assert!(compute.template_list().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn terminate_by_name_succeeds_when_unique() {
+    let compute = Arc::new(InMemoryCompute::new());
+    let svc = LaunchService {
+        compute: compute.clone(),
+        key_store: Arc::new(InMemoryKeyStore::new()),
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+        bootstrap_tpl: "echo hi",
+        ghostty_tinfo: "",
+    };
+    let inst = svc
+        .run(LaunchOpts {
+            template_name: None,
+            instance_name: Some("solo".into()),
+            dry_run: false,
+        })
+        .await
+        .expect("launch")
+        .expect("inst");
+
+    let term = TerminateService {
+        compute: compute.clone(),
+        region: "eu-west-1".into(),
+    };
+    let id = term.terminate_by_handle("solo").await.expect("terminate");
+    assert_eq!(id, inst.id);
+}
+
+#[tokio::test]
+async fn terminate_unknown_returns_not_found() {
+    let compute = Arc::new(InMemoryCompute::new());
+    let term = TerminateService {
+        compute,
+        region: "eu-west-1".into(),
+    };
+    let err = term.terminate_by_handle("ghost").await.unwrap_err();
+    assert!(matches!(err, kleya_core::Error::InstanceNotFound { .. }));
+}
+
+#[tokio::test]
+async fn list_returns_only_managed() {
+    let compute = Arc::new(InMemoryCompute::new());
+    let svc = LaunchService {
+        compute: compute.clone(),
+        key_store: Arc::new(InMemoryKeyStore::new()),
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+        bootstrap_tpl: "echo hi",
+        ghostty_tinfo: "",
+    };
+    svc.run(LaunchOpts {
+        template_name: None,
+        instance_name: Some("a".into()),
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    svc.run(LaunchOpts {
+        template_name: None,
+        instance_name: Some("b".into()),
+        dry_run: false,
+    })
+    .await
+    .unwrap();
+    let list = ListService { compute }.list_managed().await.expect("list");
+    assert_eq!(list.len(), 2);
 }

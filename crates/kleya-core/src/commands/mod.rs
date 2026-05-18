@@ -3,4 +3,6 @@
 #![allow(missing_docs)]
 
 pub mod launch;
+pub mod list;
 pub mod template;
+pub mod terminate;
