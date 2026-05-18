@@ -10,6 +10,7 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "MPL-2.0",
 ]
 confidence-threshold = 0.93
@@ -19,6 +20,18 @@ multiple-versions = "warn"
 
 [advisories]
 yanked = "deny"
+# rustls-webpki advisories (transitive via aws-smithy-http-client → rustls):
+# upstream has not shipped patched 0.101.x / 0.103.x releases yet. Track:
+# https://rustsec.org/advisories/RUSTSEC-2026-0098.html
+# https://rustsec.org/advisories/RUSTSEC-2026-0099.html
+# https://rustsec.org/advisories/RUSTSEC-2026-0104.html
+# Remove these ignores once rustls-webpki publishes patches and `cargo update`
+# resolves them.
+ignore = [
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+]
 
 [sources]
 unknown-registry = "deny"
