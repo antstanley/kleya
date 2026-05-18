@@ -1,0 +1,9 @@
+pre-push:
+  parallel: false
+  commands:
+    fmt:
+      run: cargo fmt --all -- --check
+    clippy:
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    test:
+      run: cargo nextest run --workspace --no-fail-fast
