@@ -31,6 +31,12 @@ pub fn ensure_floci() -> Option<String> {
         );
         return None;
     }
+    // If the caller provided an endpoint (CI service container, docker-compose,
+    // remote dev box), assume it is already running and skip the local
+    // `docker run` bootstrap.
+    if let Ok(endpoint) = std::env::var(FLOCI_ENDPOINT_ENV) {
+        return Some(endpoint);
+    }
     STARTED.get_or_init(|| {
         let _ = Command::new("docker")
             .args(["rm", "-f", "kleya-floci"])
@@ -53,10 +59,7 @@ pub fn ensure_floci() -> Option<String> {
         assert!(status.success(), "floci start failed");
         std::thread::sleep(std::time::Duration::from_millis(2000));
     });
-    Some(
-        std::env::var(FLOCI_ENDPOINT_ENV)
-            .unwrap_or_else(|_| format!("http://localhost:{FLOCI_PORT}")),
-    )
+    Some(format!("http://localhost:{FLOCI_PORT}"))
 }
 
 pub async fn ec2(endpoint: &str) -> aws_sdk_ec2::Client {
