@@ -2,7 +2,7 @@
 
 A small Rust CLI that bootstraps AWS EC2 spot instances as Claude-Code-ready development boxes. Zero-config by default — `kleya launch` provisions an Amazon Linux 2023 ARM instance, installs zsh / oh-my-zsh / tmux / git / rust / node / jj / python / uv / Claude Code, and prints an `ssh` invocation to attach.
 
-> **Status:** v0.1.0-rc.1 prerelease. Unix only (Linux + macOS, x86_64 + aarch64). Windows is out of scope.
+> **Status:** v0.1.0-rc.2 prerelease. Unix only (Linux + macOS, x86_64 + aarch64). Windows is out of scope.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ A small Rust CLI that bootstraps AWS EC2 spot instances as Claude-Code-ready dev
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/antstanley/kleya/releases/download/v0.1.0-rc.1/kleya-cli-installer.sh | sh
+  https://github.com/antstanley/kleya/releases/download/v0.1.0-rc.2/kleya-cli-installer.sh | sh
 ```
 
 Installs `kleya` to `~/.cargo/bin/` (or `~/.local/bin/`, whichever is on your PATH).
@@ -142,7 +142,7 @@ If you drive kleya from a coding agent (Claude Code, Cursor, OpenCode, Codex), y
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/antstanley/kleya/releases/download/v0.1.0-rc.1/install-skill.sh | sh
+  https://github.com/antstanley/kleya/releases/download/v0.1.0-rc.2/install-skill.sh | sh
 ```
 
 The installer autodetects which agents you have configured (it looks for `~/.claude/`, `~/.cursor/`, `~/.config/opencode/`, `~/.agents/`, `~/.codex/`) and writes the skill to each one's native location. Override with `--target=claude,opencode` (comma-separated) or `--target=all`.
@@ -153,7 +153,7 @@ The installer autodetects which agents you have configured (it looks for `~/.cla
 - `~/.agents/skills/using-kleya/SKILL.md` — `.agents` folder spec (cross-agent fallback)
 - `~/.codex/AGENTS.md` — Codex (appended between idempotent marker comments)
 
-Restart your agent after install. To pin a specific version, pass `--version=v0.1.0-rc.1`.
+Restart your agent after install. To pin a specific version, pass `--version=v0.1.0-rc.2`.
 
 ## Configuration
 
