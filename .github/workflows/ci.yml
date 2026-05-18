@@ -59,3 +59,19 @@ jobs:
           AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_SESSION_TOKEN=test \
           AWS_REGION=eu-west-1 \
             cargo nextest run -p kleya-aws --run-ignored all
+
+  skill-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Package the skill
+        run: python3 scripts/package_skill.py skills/using-kleya -o target/skill-dist
+      - name: Verify archive is non-empty and contains SKILL.md
+        run: |
+          test -s target/skill-dist/using-kleya.skill
+          unzip -l target/skill-dist/using-kleya.skill | grep -q 'using-kleya/SKILL.md'
+          # Guard against shipping eval material — the package excludes evals/ by design.
+          if unzip -l target/skill-dist/using-kleya.skill | grep -q 'using-kleya/evals/'; then
+            echo "error: evals/ leaked into the .skill package" >&2
+            exit 1
+          fi
