@@ -1,4 +1,9 @@
-#![allow(dead_code, missing_docs)]
+#![allow(
+    dead_code,
+    missing_docs,
+    clippy::expect_used,
+    clippy::duration_suboptimal_units
+)]
 
 use std::process::Command;
 use std::sync::OnceLock;

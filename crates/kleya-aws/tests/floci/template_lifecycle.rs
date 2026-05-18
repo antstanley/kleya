@@ -1,13 +1,17 @@
-#![allow(missing_docs, clippy::unwrap_used)]
+#![allow(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::items_after_statements
+)]
 
-mod harness {
-    include!("mod.rs");
-}
+#[path = "mod.rs"]
+mod harness;
 use harness::*;
 use std::sync::Arc;
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires KLEYA_TEST_FLOCI=1 and a running floci endpoint"]
 async fn create_list_delete_template() {
     let Some(endpoint) = ensure_floci() else {
         return;

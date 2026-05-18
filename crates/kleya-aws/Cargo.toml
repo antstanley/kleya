@@ -27,3 +27,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 serial_test = "3"
+
+[[test]]
+name = "floci_template_lifecycle"
+path = "tests/floci/template_lifecycle.rs"
