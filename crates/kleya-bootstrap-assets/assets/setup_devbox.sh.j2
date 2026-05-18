@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+sudo dnf update -y
+sudo dnf install -y git zsh util-linux-user ncurses
+
+# zsh + oh-my-zsh
+sudo chsh -s "$(which zsh)" "$(whoami)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+git clone https://github.com/zsh-users/zsh-autosuggestions   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+sed -i 's/(git)/(git zsh-autosuggestions zsh-syntax-highlighting)/g' ~/.zshrc
+
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+sudo dnf install -y gh tmux
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+echo 'export PATH="$PATH:$HOME/.cargo/bin"' >> ~/.zshrc
+
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install {{ node_major }}
+
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+"$HOME/.cargo/bin/cargo" binstall -y --disable-telemetry --strategies crate-meta-data jj-cli
+
+sudo dnf install -y python{{ python_version }} python{{ python_version }}-pip
+echo 'alias python=python{{ python_version }}' >> ~/.zshrc
+echo 'alias pip=pip{{ python_version }}' >> ~/.zshrc
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+{% if install_dev_tools -%}
+sudo dnf groupinstall -y "Development Tools"
+{%- endif %}
+
+curl -fsSL https://claude.ai/install.sh | bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+{% if install_ghostty_terminfo -%}
+# ghostty terminfo (server-side install)
+cat > /tmp/ghostty.terminfo <<'GHOSTTY_TERMINFO_EOF'
+{{ ghostty_terminfo_source }}
+GHOSTTY_TERMINFO_EOF
+sudo tic -x /tmp/ghostty.terminfo
+rm /tmp/ghostty.terminfo
+{%- endif %}
+
+{% for line in extra_pre_lines -%}
+{{ line }}
+{% endfor -%}
+{% for line in extra_post_lines -%}
+{{ line }}
+{% endfor -%}
