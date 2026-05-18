@@ -1,7 +1,8 @@
-#![allow(missing_docs, clippy::unwrap_used)]
+#![allow(missing_docs, clippy::unwrap_used, clippy::items_after_statements)]
 
 use std::sync::Arc;
 
+use kleya_core::commands::launch::{LaunchOpts, LaunchService};
 use kleya_core::commands::template::TemplateService;
 use kleya_core::config::Config;
 use kleya_core::model::{
@@ -10,7 +11,7 @@ use kleya_core::model::{
     region::AmiId,
     template::{TemplateName, TemplateSpec},
 };
-use kleya_core::test_support::InMemoryCompute;
+use kleya_core::test_support::{FakeIdGen, InMemoryCompute, InMemoryKeyStore};
 
 fn sample_spec(name: &str) -> TemplateSpec {
     TemplateSpec {
@@ -57,4 +58,53 @@ async fn delete_unknown_returns_error() {
         .await
         .unwrap_err();
     assert!(matches!(err, kleya_core::Error::ConfigInvalid { .. }));
+}
+
+#[tokio::test]
+async fn launch_zero_config_creates_default_template_and_instance() {
+    let svc = LaunchService {
+        compute: Arc::new(InMemoryCompute::new()),
+        key_store: Arc::new(InMemoryKeyStore::new()),
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+        bootstrap_tpl: "echo hi",
+        ghostty_tinfo: "",
+    };
+    let res = svc
+        .run(LaunchOpts {
+            template_name: None,
+            instance_name: None,
+            dry_run: false,
+        })
+        .await
+        .expect("launch ok");
+    let inst = res.expect("returned instance");
+    assert!(matches!(
+        inst.state,
+        kleya_core::model::instance::InstanceState::Running
+    ));
+}
+
+#[tokio::test]
+async fn launch_dry_run_returns_none_and_does_not_create_template() {
+    let compute = Arc::new(InMemoryCompute::new());
+    let svc = LaunchService {
+        compute: compute.clone(),
+        key_store: Arc::new(InMemoryKeyStore::new()),
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+        bootstrap_tpl: "echo hi",
+        ghostty_tinfo: "",
+    };
+    let res = svc
+        .run(LaunchOpts {
+            template_name: None,
+            instance_name: None,
+            dry_run: true,
+        })
+        .await
+        .expect("dry-run ok");
+    assert!(res.is_none());
+    use kleya_core::ports::cloud_compute::CloudCompute;
+    assert!(compute.template_list().await.unwrap().is_empty());
 }
