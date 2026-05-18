@@ -15,6 +15,12 @@ use crate::limits::{
 /// pathologically large inputs to bound the gzip allocation.
 pub fn encode_user_data(raw: &str) -> Result<String> {
     assert!(!raw.is_empty(), "encode_user_data called with empty raw");
+    if raw.len() > USER_DATA_RAW_BYTES_MAX * 4 {
+        return Err(Error::UserDataTooLarge {
+            bytes: raw.len(),
+            max: USER_DATA_RAW_BYTES_MAX * 4,
+        });
+    }
     let mut enc = GzEncoder::new(Vec::with_capacity(raw.len()), Compression::best());
     enc.write_all(raw.as_bytes())?;
     let gz = enc.finish()?;
@@ -99,5 +105,18 @@ mod tests {
     fn passthrough_at_limit_succeeds() {
         let at = "x".repeat(USER_DATA_RAW_BYTES_MAX);
         assert!(encode_user_data_passthrough(&at).is_ok());
+    }
+
+    #[test]
+    fn rejects_oversize_raw_input() {
+        let big = "x".repeat(USER_DATA_RAW_BYTES_MAX * 4 + 1);
+        let err = encode_user_data(&big).unwrap_err();
+        match err {
+            Error::UserDataTooLarge { bytes, max } => {
+                assert_eq!(max, USER_DATA_RAW_BYTES_MAX * 4);
+                assert_eq!(bytes, USER_DATA_RAW_BYTES_MAX * 4 + 1);
+            }
+            other => panic!("expected UserDataTooLarge with raw ceiling, got {other:?}"),
+        }
     }
 }

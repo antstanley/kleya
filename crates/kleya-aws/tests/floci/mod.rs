@@ -5,9 +5,12 @@ use std::sync::OnceLock;
 
 pub const FLOCI_ENDPOINT_ENV: &str = "KLEYA_TEST_FLOCI_ENDPOINT";
 pub const FLOCI_ENABLE_ENV: &str = "KLEYA_TEST_FLOCI";
-// Replace digest before merging once `docker pull floci/floci:latest && docker inspect ...`
-// has been captured; never leave REPLACE_WITH_PIN in CI.
-pub const FLOCI_IMAGE: &str = "floci/floci@sha256:REPLACE_WITH_PIN";
+// Pinned to the floci/floci:latest manifest digest captured 2026-05-18 via
+// `curl -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+//   "https://registry-1.docker.io/v2/floci/floci/manifests/latest"`.
+// Re-pin (and update this comment) when a newer Floci release is adopted.
+pub const FLOCI_IMAGE: &str =
+    "floci/floci@sha256:43f48b8cd04354f356b859cc43a8915a88516df6530d4691159bed39b7e9ea32";
 pub const FLOCI_PORT: u16 = 4566;
 
 static STARTED: OnceLock<()> = OnceLock::new();

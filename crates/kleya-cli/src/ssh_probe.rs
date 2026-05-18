@@ -4,13 +4,16 @@
 use std::time::{Duration, Instant};
 
 use kleya_core::limits::{
-    SSH_PROBE_INTERVAL_SECONDS, SSH_PROBE_PORT, SSH_PROBE_TCP_TIMEOUT_MS,
-    SSH_PROBE_TIMEOUT_SECONDS,
+    SSH_PROBE_INTERVAL_SECONDS, SSH_PROBE_PORT, SSH_PROBE_TCP_TIMEOUT_MS, SSH_PROBE_TIMEOUT_SECONDS,
 };
 use kleya_core::model::instance::InstanceId;
 use kleya_core::{Error, Result};
 
-pub async fn probe_ssh_ready(endpoint: &str, instance: &InstanceId) -> Result<()> {
+pub async fn probe_ssh_ready(
+    endpoint: &str,
+    instance: &InstanceId,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<()> {
     const { assert!(SSH_PROBE_INTERVAL_SECONDS > 0, "ssh probe interval is 0") };
     assert!(!endpoint.is_empty(), "ssh probe endpoint empty");
     let timeout = Duration::from_secs(u64::from(SSH_PROBE_TIMEOUT_SECONDS));
@@ -31,7 +34,11 @@ pub async fn probe_ssh_ready(endpoint: &str, instance: &InstanceId) -> Result<()
         if matches!(probe, Ok(Ok(_))) {
             return Ok(());
         }
-        tokio::time::sleep(interval).await;
+        if kleya_core::util::wait_or_cancel(interval, Some(cancel)).await {
+            return Err(Error::Cancelled {
+                instance: instance.clone(),
+            });
+        }
     }
 }
 
@@ -59,4 +66,27 @@ pub async fn wait_cloud_init(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn returns_cancelled_when_token_pre_cancelled() {
+        let tok = CancellationToken::new();
+        tok.cancel();
+        let id = InstanceId::new("i-cafe0001").unwrap();
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            probe_ssh_ready("no-such-host.invalid", &id, &tok),
+        )
+        .await
+        .expect("test should not exceed 5s wall clock");
+        match res {
+            Err(Error::Cancelled { instance }) => assert_eq!(instance.as_str(), "i-cafe0001"),
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
 }

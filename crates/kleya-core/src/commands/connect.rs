@@ -7,14 +7,14 @@ use crate::error::Error;
 use crate::limits::{
     SSH_PROBE_INTERVAL_SECONDS, SSH_PROBE_PORT, SSH_PROBE_TCP_TIMEOUT_MS, SSH_PROBE_TIMEOUT_SECONDS,
 };
-use once_cell::sync::Lazy;
-use regex::Regex;
 use crate::model::instance::{Instance, InstanceFilter, InstanceId};
 use crate::model::key::KeyName;
-use crate::model::tag::KLEYA_TAG_KEY;
+use crate::model::tag::{KLEYA_TAG_KEY, KLEYA_TAG_MANAGED};
 use crate::ports::cloud_compute::CloudCompute;
 use crate::ports::key_store::KeyStore;
 use crate::Result;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 pub struct ConnectService {
     pub compute: Arc<dyn CloudCompute>,
@@ -46,9 +46,7 @@ impl ConnectService {
         if let Some(s) = &opts.tmux_session {
             if !TMUX_SESSION_RE.is_match(s) {
                 return Err(Error::ConfigInvalid {
-                    reason: format!(
-                        "tmux session '{s}' must match ^[a-z0-9_-]{{1,63}}$"
-                    ),
+                    reason: format!("tmux session '{s}' must match ^[a-z0-9_-]{{1,63}}$"),
                 });
             }
         }
@@ -106,7 +104,7 @@ impl ConnectService {
         }
     }
 
-    fn resolve_key(&self, inst: &Instance) -> Result<KeyName> {
+    pub(crate) fn resolve_key(&self, inst: &Instance) -> Result<KeyName> {
         let tagged = inst
             .tags
             .iter()
@@ -114,6 +112,18 @@ impl ConnectService {
             .map(|t| t.value.clone());
         if let Some(n) = tagged {
             return KeyName::new(n);
+        }
+        let managed = inst
+            .tags
+            .iter()
+            .any(|t| t.key == KLEYA_TAG_MANAGED && t.value == "true");
+        if !managed {
+            return Err(Error::ConfigInvalid {
+                reason: format!(
+                    "instance {} not managed by kleya; pass --instance-id and configure a key",
+                    inst.id.as_str()
+                ),
+            });
         }
         let default = self.config.keys.default_key_name.trim();
         if default.is_empty() {
@@ -218,5 +228,31 @@ mod tests {
             .expect("plan ok");
         assert!(plan.argv.iter().any(|a| a == "tmux"));
         assert!(plan.argv.iter().any(|a| a == "kleya"));
+    }
+
+    #[tokio::test]
+    async fn resolve_key_rejects_unmanaged_instance() {
+        use crate::model::instance::{Instance, InstanceId, InstanceState};
+        use crate::model::tag::Tag;
+        let cfg = Arc::new(Config::default());
+        let compute: Arc<dyn CloudCompute> = Arc::new(InMemoryCompute::new());
+        let key_store: Arc<dyn KeyStore> = Arc::new(InMemoryKeyStore::new());
+        let svc = ConnectService {
+            compute,
+            key_store,
+            config: cfg,
+            region: "eu-west-1".into(),
+        };
+        let inst = Instance {
+            id: InstanceId::new("i-aabbccdd").unwrap(),
+            name: None,
+            state: InstanceState::Running,
+            public_dns: None,
+            public_ip: None,
+            tags: vec![Tag::new("Project", "other").unwrap()],
+        };
+        let err = svc.resolve_key(&inst).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("not managed by kleya"), "got: {msg}");
     }
 }

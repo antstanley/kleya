@@ -18,6 +18,7 @@ pub mod model;
 pub mod ports;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod util;
 
 pub use config::Config;
 pub use error::{Error, Result};

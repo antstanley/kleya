@@ -73,6 +73,7 @@ pub struct TemplateCreateArgs {
 
 #[derive(Args, Debug)]
 pub struct TemplateUpdateArgs {
+    #[arg(long)]
     pub name: String,
     #[arg(long)]
     pub ami: Option<String>,
@@ -91,6 +92,7 @@ pub struct TemplateListArgs {
 }
 
 #[derive(Args, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct LaunchArgs {
     #[arg(long)]
     pub template: Option<String>,
@@ -104,6 +106,8 @@ pub struct LaunchArgs {
     pub connect: bool,
     #[arg(long)]
     pub wait_bootstrap: bool,
+    #[arg(long)]
+    pub no_wait_bootstrap: bool,
     #[arg(long)]
     pub dry_run: bool,
 }

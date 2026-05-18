@@ -128,7 +128,7 @@ impl LaunchService {
             .compute
             .ensure_default_security_group("kleya-default")
             .await?;
-        let user_data_b64 = self.render_user_data()?;
+        let user_data_b64 = self.render_user_data().await?;
         let mut tags = vec![Tag::new("Project", "kleya")?];
         if let Some(t) = self
             .config
@@ -163,7 +163,7 @@ impl LaunchService {
         Ok(())
     }
 
-    fn render_user_data(&self) -> Result<String> {
+    async fn render_user_data(&self) -> Result<String> {
         if let Some(path) = &self.config.bootstrap.user_data_path {
             if self.config.bootstrap.install_ghostty_terminfo {
                 tracing::warn!(
@@ -171,7 +171,7 @@ impl LaunchService {
                 );
             }
             let expanded = shellexpand_tilde(path);
-            let bytes = std::fs::read(&expanded)?;
+            let bytes = tokio::fs::read(&expanded).await?;
             let raw = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
                 reason: format!("user-data override not utf-8: {e}"),
             })?;
@@ -207,5 +207,4 @@ impl LaunchService {
             }
         }
     }
-
 }

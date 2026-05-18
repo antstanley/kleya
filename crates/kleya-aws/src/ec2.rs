@@ -88,18 +88,20 @@ fn build_request_launch_template_data(spec: &TemplateSpec) -> e::RequestLaunchTe
         .instance_type(e::InstanceType::from(spec.instance_type.as_str()))
         .key_name(spec.key_name.as_str())
         .user_data(&spec.user_data_base64)
-        .set_security_group_ids(Some(
-            spec.security_group_ids
-                .iter()
-                .map(|s| s.0.clone())
-                .collect(),
-        ))
         .set_tag_specifications(Some(vec![
             e::LaunchTemplateTagSpecificationRequest::builder()
                 .resource_type(e::ResourceType::Instance)
                 .set_tags(Some(tags))
                 .build(),
         ]));
+    if !spec.security_group_ids.is_empty() {
+        data = data.set_security_group_ids(Some(
+            spec.security_group_ids
+                .iter()
+                .map(|s| s.0.clone())
+                .collect(),
+        ));
+    }
     if let Some(a) = &spec.ami_id {
         data = data.image_id(a.0.clone());
     }
@@ -158,17 +160,12 @@ impl CloudCompute for AwsEc2 {
     }
 
     async fn template_list(&self) -> Result<Vec<TemplateSummary>> {
-        let mut paginator = self
-            .ec2
-            .describe_launch_templates()
-            .into_paginator()
-            .send();
+        let mut paginator = self.ec2.describe_launch_templates().into_paginator().send();
         let mut acc = Vec::new();
         while let Some(page) = paginator.next().await {
             let page = page.map_err(sdk)?;
             for lt in page.launch_templates() {
-                if let (Some(id), Some(name)) =
-                    (lt.launch_template_id(), lt.launch_template_name())
+                if let (Some(id), Some(name)) = (lt.launch_template_id(), lt.launch_template_name())
                 {
                     acc.push(TemplateSummary {
                         id: TemplateId(id.to_string()),
@@ -334,21 +331,11 @@ impl CloudCompute for AwsEc2 {
         assert!(deadline.poll_interval.as_secs() > 0, "poll_interval is 0");
         assert!(deadline.timeout > deadline.poll_interval, "timeout < poll");
         let start = std::time::Instant::now();
-        let max_attempts: u32 = u32::try_from(
-            deadline.timeout.as_secs() / deadline.poll_interval.as_secs() + 2,
-        )
-        .unwrap_or(u32::MAX);
+        let max_attempts: u32 =
+            u32::try_from(deadline.timeout.as_secs() / deadline.poll_interval.as_secs() + 2)
+                .unwrap_or(u32::MAX);
         let mut attempts: u32 = 0;
         loop {
-            if let Some(c) = &deadline.cancel {
-                if c.is_cancelled() {
-                    return Err(kleya_core::Error::LaunchWaitTimeout {
-                        instance: id.clone(),
-                        elapsed_seconds: u32::try_from(start.elapsed().as_secs())
-                            .unwrap_or(u32::MAX),
-                    });
-                }
-            }
             attempts = attempts.saturating_add(1);
             let inst = self.instance_describe(id).await?;
             if matches!(inst.state, InstanceState::Running) {
@@ -360,7 +347,13 @@ impl CloudCompute for AwsEc2 {
                     elapsed_seconds: u32::try_from(start.elapsed().as_secs()).unwrap_or(u32::MAX),
                 });
             }
-            tokio::time::sleep(deadline.poll_interval).await;
+            if kleya_core::util::wait_or_cancel(deadline.poll_interval, deadline.cancel.as_ref())
+                .await
+            {
+                return Err(kleya_core::Error::Cancelled {
+                    instance: id.clone(),
+                });
+            }
         }
     }
 

@@ -21,6 +21,7 @@ flate2      = { workspace = true }
 base64      = { workspace = true }
 crc32fast   = "1"
 tracing     = { workspace = true }
+tokio       = { workspace = true }
 tokio-util  = { workspace = true }
 
 [dependencies.kleya-bootstrap-assets]
@@ -28,8 +29,12 @@ path = "../kleya-bootstrap-assets"
 
 [dev-dependencies]
 insta = { workspace = true, features = ["yaml"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 default = []
 test-support = []
+
+[[test]]
+name = "commands_with_fakes"
+required-features = ["test-support"]

@@ -35,6 +35,9 @@ pub enum Error {
         elapsed_seconds: u32,
     },
 
+    #[error("cancelled: {instance}")]
+    Cancelled { instance: InstanceId },
+
     #[error("ssh key mismatch for {name}: local fingerprint differs from EC2 record")]
     KeyMismatch { name: KeyName },
 
@@ -94,5 +97,15 @@ mod tests {
         let s = format!("{e}");
         assert!(s.contains("17000"));
         assert!(s.contains("16384"));
+    }
+
+    #[test]
+    fn cancelled_display_contains_instance() {
+        let e = Error::Cancelled {
+            instance: InstanceId::new("i-cafef00d").unwrap(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("cancelled"), "got: {s}");
+        assert!(s.contains("i-cafef00d"), "got: {s}");
     }
 }

@@ -18,10 +18,7 @@ use crate::clap_args::{Cli, Cmd, ConfigCmd, TemplateCmd};
 use crate::config_loader;
 use crate::key_store_fs::FsKeyStore;
 
-pub async fn run(
-    cli: Cli,
-    cancel: tokio_util::sync::CancellationToken,
-) -> kleya_core::Result<()> {
+pub async fn run(cli: Cli, cancel: tokio_util::sync::CancellationToken) -> kleya_core::Result<()> {
     let config = Arc::new(config_loader::load(cli.config.as_deref())?);
     let region = cli
         .region
@@ -57,7 +54,7 @@ pub async fn run_with(
     match cli.command {
         Cmd::Template { action } => match action {
             TemplateCmd::Create(args) => {
-                let spec = build_template_spec(&config, &args.name, &args)?;
+                let spec = build_template_spec(&config, &args.name, &args).await?;
                 TemplateService {
                     compute,
                     config: config.clone(),
@@ -74,7 +71,7 @@ pub async fn run_with(
                     key_name: args.key_name,
                     user_data: args.user_data,
                 };
-                let spec = build_template_spec(&config, &args.name, &create_args)?;
+                let spec = build_template_spec(&config, &args.name, &create_args).await?;
                 let svc = TemplateService {
                     compute: compute.clone(),
                     config: config.clone(),
@@ -96,9 +93,8 @@ pub async fn run_with(
                 };
                 let list = svc.list().await?;
                 if args.json {
-                    let json = serde_json::to_string_pretty(&list).map_err(|e| {
-                        kleya_core::Error::Io(std::io::Error::other(e))
-                    })?;
+                    let json = serde_json::to_string_pretty(&list)
+                        .map_err(|e| kleya_core::Error::Io(std::io::Error::other(e)))?;
                     println!("{json}");
                 } else {
                     for t in list {
@@ -131,6 +127,8 @@ pub async fn run_with(
                 }
                 crate::clap_args::Market::Spot => kleya_core::model::market::MarketKind::Spot,
             });
+            let connect = args.connect;
+            let do_wait = effective_wait_bootstrap(&args);
             let res = svc
                 .run(LaunchOpts {
                     template_name: args.template,
@@ -150,28 +148,24 @@ pub async fn run_with(
                         .map_or("-", kleya_core::model::instance::InstanceName::as_str),
                     inst.public_dns.as_deref().unwrap_or("-"),
                 );
-                if args.connect || args.wait_bootstrap {
+                if connect || do_wait {
                     let endpoint = inst.public_dns.clone().ok_or_else(|| {
                         kleya_core::Error::ConfigInvalid {
                             reason: format!("instance {} has no public DNS", inst.id.as_str()),
                         }
                     })?;
-                    crate::ssh_probe::probe_ssh_ready(&endpoint, &inst.id).await?;
-                    if args.wait_bootstrap {
+                    crate::ssh_probe::probe_ssh_ready(&endpoint, &inst.id, &cancel).await?;
+                    if do_wait {
                         let key_name = inst.tags.iter().find(|t| t.key == "kleya:key").map_or_else(
                             || config.keys.default_key_name.clone(),
                             |t| t.value.clone(),
                         );
                         let key = kleya_core::model::key::KeyName::new(key_name)?;
                         let key_path = key_store.private_path(&key)?;
-                        crate::ssh_probe::wait_cloud_init(
-                            &key_path,
-                            &config.ssh.user,
-                            &endpoint,
-                        )
-                        .await?;
+                        crate::ssh_probe::wait_cloud_init(&key_path, &config.ssh.user, &endpoint)
+                            .await?;
                     }
-                    if args.connect {
+                    if connect {
                         let svc = ConnectService {
                             compute,
                             key_store,
@@ -236,7 +230,7 @@ pub async fn run_with(
                 println!("{}", shell_quote(&plan.argv));
                 return Ok(());
             }
-            crate::ssh_probe::probe_ssh_ready(&plan.endpoint, &plan.instance_id).await?;
+            crate::ssh_probe::probe_ssh_ready(&plan.endpoint, &plan.instance_id, &cancel).await?;
             let err = Command::new(&plan.argv[0]).args(&plan.argv[1..]).exec();
             Err(kleya_core::Error::Io(err))
         }
@@ -273,7 +267,7 @@ pub async fn run_with(
     }
 }
 
-fn build_template_spec(
+async fn build_template_spec(
     config: &Arc<Config>,
     name: &str,
     args: &crate::clap_args::TemplateCreateArgs,
@@ -307,7 +301,7 @@ fn build_template_spec(
         .or_else(|| template_cfg.and_then(|t| t.ami_id.clone()))
         .map(AmiId);
     let user_data_b64 = if let Some(path) = &args.user_data {
-        let bytes = std::fs::read(path)?;
+        let bytes = tokio::fs::read(path).await?;
         let raw = String::from_utf8(bytes).map_err(|e| kleya_core::Error::ConfigInvalid {
             reason: format!("user-data not utf-8: {e}"),
         })?;
@@ -352,6 +346,10 @@ fn build_template_spec(
     })
 }
 
+pub(crate) fn effective_wait_bootstrap(args: &crate::clap_args::LaunchArgs) -> bool {
+    args.wait_bootstrap || (args.connect && !args.no_wait_bootstrap)
+}
+
 fn confirm(action: &str) -> kleya_core::Result<bool> {
     use std::io::Write as _;
     eprint!("{action}? [y/N] ");
@@ -375,4 +373,44 @@ fn shell_quote(argv: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clap_args::LaunchArgs;
+
+    fn args(connect: bool, wait: bool, no_wait: bool) -> LaunchArgs {
+        LaunchArgs {
+            template: None,
+            name: None,
+            instance_type: None,
+            market: None,
+            connect,
+            wait_bootstrap: wait,
+            no_wait_bootstrap: no_wait,
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn effective_wait_explicit_flag_wins() {
+        assert!(effective_wait_bootstrap(&args(false, true, false)));
+        assert!(effective_wait_bootstrap(&args(false, true, true)));
+    }
+
+    #[test]
+    fn effective_wait_connect_implies_wait() {
+        assert!(effective_wait_bootstrap(&args(true, false, false)));
+    }
+
+    #[test]
+    fn effective_wait_connect_with_no_wait_skips() {
+        assert!(!effective_wait_bootstrap(&args(true, false, true)));
+    }
+
+    #[test]
+    fn effective_wait_neither_default_false() {
+        assert!(!effective_wait_bootstrap(&args(false, false, false)));
+    }
 }
