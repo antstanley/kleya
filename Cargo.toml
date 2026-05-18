@@ -61,6 +61,11 @@ insta = "1"
 # Bump in lockstep with the installed `dist` binary.
 cargo-dist-version = "0.31.0"
 ci = "github"
+# We post-process the generated release.yml to pin actions to commit SHAs;
+# `allow-dirty = ["ci"]` tells `dist host` not to abort when the on-disk
+# workflow differs from what `dist generate` would produce. Re-pin after every
+# `dist generate`.
+allow-dirty = ["ci"]
 # `plan` on PRs/main pushes runs the matrix in dry-run mode; tag pushes
 # (v*.*.*) build real artifacts and draft a Release.
 pr-run-mode = "plan"
