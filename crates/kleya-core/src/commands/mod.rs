@@ -2,6 +2,7 @@
 
 #![allow(missing_docs)]
 
+pub mod connect;
 pub mod launch;
 pub mod list;
 pub mod template;
