@@ -10,6 +10,37 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "kleya"
 path = "src/main.rs"
+
+[dependencies]
+kleya-core = { path = "../kleya-core", features = ["test-support"] }
+kleya-aws = { path = "../kleya-aws" }
+kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
+aws-config = "1"
+aws-sdk-ec2 = "1"
+aws-sdk-ssm = "1"
+clap = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time", "net"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+jsonc-parser = { workspace = true }
+anyhow = { workspace = true }
+nix = { workspace = true }
+ssh-key = { workspace = true }
+md-5 = "0.10"
+hex = "0.4"
+base64 = { workspace = true }
+shellexpand = "3"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
