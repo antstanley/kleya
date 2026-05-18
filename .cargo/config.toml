@@ -1,5 +1,6 @@
 [build]
 incremental = false
+target-dir = "/tmp/kleya-target"
 
 [profile.dev]
 incremental = false
