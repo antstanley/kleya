@@ -195,9 +195,12 @@ Every option has a fallback so `kleya launch` with no flags or config file launc
 1. Resolve region.
 2. Lookup default VPC → choose subnet via `resolve_default_subnet()`. When the default VPC has multiple subnets, pick the **lexicographically first by AZ name** so the choice is deterministic across runs.
 3. `ensure_default_security_group("kleya-default")` — idempotent.
-4. **Keypair, two steps** (no silent fallthrough; see §9 lifecycle table):
-   1. `KeyStore::generate(name)` (skipped if the local pem already exists).
-   2. `CloudCompute::ensure_default_keypair(name, public_key)` to register the public half with the provider.
+4. **Keypair** — `LaunchService::ensure_keypair(&plan.key_name)` runs on **every** launch (not only first-run), before the template-exists short-circuit. It is a single 4-way match on `(KeyStore::exists(name), CloudCompute::keypair_fingerprint(name))` that implements the §9 lifecycle table exactly:
+   - `(true, Some)` — local fingerprint must equal the cloud fingerprint, else `Error::KeyMismatch`.
+   - `(true, None)` — push local public half via `ensure_default_keypair`.
+   - `(false, Some)` — `Error::KeyOrphaned`.
+   - `(false, None)` — `KeyStore::generate` → `ensure_default_keypair` with the new public half.
+   This is *not* a short-circuited "first-run only" check: running it every launch catches drift (key rotated in EC2 out-of-band, local pem clobbered, etc.) at the cost of one `DescribeKeyPairs` round-trip per launch — negligible against the launch wall clock.
 5. **Render and encode user-data**, then `ensure_default_template(...)` with the resulting `TemplateSpec`:
    1. `bootstrap::render(&BootstrapVars{ … })` — pure, returns the rendered shell script.
    2. `bootstrap::encode(&rendered)` — gzip + base64; size checks happen here.
@@ -364,7 +367,7 @@ Default implementation: `ssh-key` crate, **Ed25519**, OpenSSH format, `dir = ~/.
 
 **Fingerprint algorithm.** EC2 returns, for keys created via `ImportKeyPair`, the **MD5 of the DER-encoded `SubjectPublicKeyInfo`** of the imported public key, formatted as colon-separated lowercase hex (`aa:bb:cc:…`). The same algorithm applies to RSA and Ed25519 imports — the format does *not* change per algorithm. The local `KeyStore::fingerprint` impl must compute MD5 over the same DER SPKI bytes (use `ssh_key::PublicKey::to_pkcs8_der`, hash with `md-5`, format with `:` between bytes). It is **not** correct to MD5 the OpenSSH wire-format body (the bytes between `ssh-ed25519 ` and the comment) — those bytes differ from the DER SPKI and will not match what AWS returns.
 
-**Keypair lifecycle** — no silent fallthrough:
+**Keypair lifecycle** — no silent fallthrough; evaluated on every launch by `LaunchService::ensure_keypair`:
 
 | Local key | EC2 key registered | Action |
 |---|---|---|
@@ -375,6 +378,8 @@ Default implementation: `ssh-key` crate, **Ed25519**, OpenSSH format, `dir = ~/.
 | absent | absent | generate Ed25519 → write 0600 → `ImportKeyPair` |
 
 Fingerprint comparison uses EC2's MD5-of-public-key value (returned by `DescribeKeyPairs`) computed locally from the stored public half. This is a paired-assertion property: wrote private + imported public ⇒ on read, fingerprints must match.
+
+**Adapter-level confirm round-trip.** `kleya-aws::AwsEc2::ensure_default_keypair` calls `ImportKeyPair`, treats `InvalidKeyPair.Duplicate` as success, and then issues a follow-up `DescribeKeyPairs(key_names=[name])` to confirm the key actually exists in EC2. This guards against the narrow case where AWS reports `Duplicate` for a key that has since been deleted (TOCTOU between cache invalidation and the call); without the confirm, a later `RunInstances` would fail with a cryptic `KeyPair does not exist`. The describe is a single ~50 ms call and is unconditional on the import branch.
 
 **Permissions assertions** (Unix only — Windows is out of scope; documented as such):
 
