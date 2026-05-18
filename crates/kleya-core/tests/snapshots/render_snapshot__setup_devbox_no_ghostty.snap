@@ -1,13 +1,13 @@
 ---
 source: crates/kleya-core/tests/render_snapshot.rs
-assertion_line: 18
+assertion_line: 17
 expression: out
 ---
 #!/usr/bin/env bash
 set -euxo pipefail
 
 sudo dnf update -y
-sudo dnf install -y git zsh util-linux-user ncurses
+sudo dnf install -y git zsh util-linux-user
 
 # zsh + oh-my-zsh
 sudo chsh -s "$(which zsh)" "$(whoami)"
@@ -30,9 +30,9 @@ nvm install 24
 curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 "$HOME/.cargo/bin/cargo" binstall -y --disable-telemetry --strategies crate-meta-data jj-cli
 
-sudo dnf install -y python3.14 python3.14-pip
-echo 'alias python=python3.14' >> ~/.zshrc
-echo 'alias pip=pip3.14' >> ~/.zshrc
+sudo dnf install -y python3.12 python3.12-pip
+echo 'alias python=python3.12' >> ~/.zshrc
+echo 'alias pip=pip3.12' >> ~/.zshrc
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 

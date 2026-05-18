@@ -7,7 +7,7 @@ expression: out
 set -euxo pipefail
 
 sudo dnf update -y
-sudo dnf install -y git zsh util-linux-user ncurses
+sudo dnf install -y git zsh util-linux-user
 
 # zsh + oh-my-zsh
 sudo chsh -s "$(which zsh)" "$(whoami)"
@@ -30,9 +30,9 @@ nvm install 24
 curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 "$HOME/.cargo/bin/cargo" binstall -y --disable-telemetry --strategies crate-meta-data jj-cli
 
-sudo dnf install -y python3.14 python3.14-pip
-echo 'alias python=python3.14' >> ~/.zshrc
-echo 'alias pip=pip3.14' >> ~/.zshrc
+sudo dnf install -y python3.12 python3.12-pip
+echo 'alias python=python3.12' >> ~/.zshrc
+echo 'alias pip=pip3.12' >> ~/.zshrc
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 
@@ -41,6 +41,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 
 # ghostty terminfo (server-side install)
+sudo dnf install -y ncurses
 cat > /tmp/ghostty.terminfo <<'GHOSTTY_TERMINFO_EOF'
 # Generated from ghostty-org/ghostty@6c68650920804a202a3208d7d355368c9dd28a46 src/terminfo/ghostty.zig (pinned 2026-05-18)
 xterm-ghostty|ghostty|Ghostty,

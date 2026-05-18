@@ -28,6 +28,7 @@ pub trait CloudCompute: Send + Sync {
 
     async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId>;
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()>;
+    async fn ensure_default_template(&self, spec: &TemplateSpec) -> Result<TemplateId>;
     async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>>;
     async fn resolve_default_subnet(&self) -> Result<SubnetId>;
     async fn resolve_ami_alias(&self, alias: &str) -> Result<AmiId>;

@@ -16,6 +16,13 @@ pub fn ensure_floci() -> Option<String> {
     if std::env::var(FLOCI_ENABLE_ENV).is_err() {
         return None;
     }
+    if FLOCI_IMAGE.contains("REPLACE_WITH_PIN") {
+        eprintln!(
+            "FLOCI_IMAGE digest is unpinned ({FLOCI_IMAGE}); pin it before \
+             running floci tests"
+        );
+        return None;
+    }
     STARTED.get_or_init(|| {
         let _ = Command::new("docker")
             .args(["rm", "-f", "kleya-floci"])

@@ -13,3 +13,4 @@ pub mod dispatch;
 pub mod exit_code;
 pub mod key_store_fs;
 pub mod logging;
+pub mod ssh_probe;

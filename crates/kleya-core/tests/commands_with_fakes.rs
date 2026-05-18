@@ -69,14 +69,15 @@ async fn launch_zero_config_creates_default_template_and_instance() {
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
         config: Arc::new(Config::default()),
-        bootstrap_tpl: "echo hi",
-        ghostty_tinfo: "",
     };
     let res = svc
         .run(LaunchOpts {
             template_name: None,
             instance_name: None,
+            instance_type: None,
+            market: None,
             dry_run: false,
+            cancel: None,
         })
         .await
         .expect("launch ok");
@@ -95,14 +96,15 @@ async fn launch_dry_run_returns_none_and_does_not_create_template() {
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
         config: Arc::new(Config::default()),
-        bootstrap_tpl: "echo hi",
-        ghostty_tinfo: "",
     };
     let res = svc
         .run(LaunchOpts {
             template_name: None,
             instance_name: None,
+            instance_type: None,
+            market: None,
             dry_run: true,
+            cancel: None,
         })
         .await
         .expect("dry-run ok");
@@ -119,14 +121,15 @@ async fn terminate_by_name_succeeds_when_unique() {
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
         config: Arc::new(Config::default()),
-        bootstrap_tpl: "echo hi",
-        ghostty_tinfo: "",
     };
     let inst = svc
         .run(LaunchOpts {
             template_name: None,
             instance_name: Some("solo".into()),
+            instance_type: None,
+            market: None,
             dry_run: false,
+            cancel: None,
         })
         .await
         .expect("launch")
@@ -159,20 +162,24 @@ async fn list_returns_only_managed() {
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
         config: Arc::new(Config::default()),
-        bootstrap_tpl: "echo hi",
-        ghostty_tinfo: "",
     };
     svc.run(LaunchOpts {
         template_name: None,
         instance_name: Some("a".into()),
+        instance_type: None,
+        market: None,
         dry_run: false,
+        cancel: None,
     })
     .await
     .unwrap();
     svc.run(LaunchOpts {
         template_name: None,
         instance_name: Some("b".into()),
+        instance_type: None,
+        market: None,
         dry_run: false,
+        cancel: None,
     })
     .await
     .unwrap();

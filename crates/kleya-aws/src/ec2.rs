@@ -24,61 +24,100 @@ pub struct AwsEc2 {
     pub region: String,
 }
 
+impl AwsEc2 {
+    async fn authorize_default_ingress(&self, group_id: &str) -> Result<()> {
+        let auth = self
+            .ec2
+            .authorize_security_group_ingress()
+            .group_id(group_id)
+            .ip_permissions(
+                e::IpPermission::builder()
+                    .ip_protocol("tcp")
+                    .from_port(22)
+                    .to_port(22)
+                    .ip_ranges(e::IpRange::builder().cidr_ip("0.0.0.0/0").build())
+                    .build(),
+            )
+            .send()
+            .await;
+        if let Err(err) = auth {
+            if !has_code(&err, "InvalidPermission.Duplicate") {
+                return Err(sdk(err).into());
+            }
+        }
+        Ok(())
+    }
+}
+
 fn sdk<E: std::error::Error + Send + Sync + 'static>(e: E) -> AwsError {
     AwsError::Sdk(Box::new(e))
+}
+
+use aws_sdk_ec2::error::ProvideErrorMetadata;
+
+fn has_code<E, R>(err: &aws_sdk_ec2::error::SdkError<E, R>, code: &str) -> bool
+where
+    E: ProvideErrorMetadata,
+{
+    err.code() == Some(code)
+}
+
+fn build_request_launch_template_data(spec: &TemplateSpec) -> e::RequestLaunchTemplateData {
+    let tags: Vec<e::Tag> = spec
+        .tags
+        .iter()
+        .filter_map(|t| e::Tag::builder().key(&t.key).value(&t.value).build().into())
+        .collect();
+    let market = match spec.market {
+        MarketKind::Spot => Some(
+            e::LaunchTemplateInstanceMarketOptionsRequest::builder()
+                .market_type(e::MarketType::Spot)
+                .spot_options(
+                    e::LaunchTemplateSpotMarketOptionsRequest::builder()
+                        .spot_instance_type(match spec.spot_type {
+                            SpotType::OneTime => e::SpotInstanceType::OneTime,
+                            SpotType::Persistent => e::SpotInstanceType::Persistent,
+                        })
+                        .build(),
+                )
+                .build(),
+        ),
+        MarketKind::OnDemand => None,
+    };
+    let mut data = e::RequestLaunchTemplateData::builder()
+        .instance_type(e::InstanceType::from(spec.instance_type.as_str()))
+        .key_name(spec.key_name.as_str())
+        .user_data(&spec.user_data_base64)
+        .set_security_group_ids(Some(
+            spec.security_group_ids
+                .iter()
+                .map(|s| s.0.clone())
+                .collect(),
+        ))
+        .set_tag_specifications(Some(vec![
+            e::LaunchTemplateTagSpecificationRequest::builder()
+                .resource_type(e::ResourceType::Instance)
+                .set_tags(Some(tags))
+                .build(),
+        ]));
+    if let Some(a) = &spec.ami_id {
+        data = data.image_id(a.0.clone());
+    }
+    if let Some(m) = market {
+        data = data.instance_market_options(m);
+    }
+    data.build()
 }
 
 #[async_trait]
 impl CloudCompute for AwsEc2 {
     async fn template_create(&self, spec: &TemplateSpec) -> Result<TemplateId> {
-        let tags: Vec<e::Tag> = spec
-            .tags
-            .iter()
-            .filter_map(|t| e::Tag::builder().key(&t.key).value(&t.value).build().into())
-            .collect();
-        let market = match spec.market {
-            MarketKind::Spot => Some(
-                e::LaunchTemplateInstanceMarketOptionsRequest::builder()
-                    .market_type(e::MarketType::Spot)
-                    .spot_options(
-                        e::LaunchTemplateSpotMarketOptionsRequest::builder()
-                            .spot_instance_type(match spec.spot_type {
-                                SpotType::OneTime => e::SpotInstanceType::OneTime,
-                                SpotType::Persistent => e::SpotInstanceType::Persistent,
-                            })
-                            .build(),
-                    )
-                    .build(),
-            ),
-            MarketKind::OnDemand => None,
-        };
-        let mut data = e::RequestLaunchTemplateData::builder()
-            .instance_type(e::InstanceType::from(spec.instance_type.as_str()))
-            .key_name(spec.key_name.as_str())
-            .user_data(&spec.user_data_base64)
-            .set_security_group_ids(Some(
-                spec.security_group_ids
-                    .iter()
-                    .map(|s| s.0.clone())
-                    .collect(),
-            ))
-            .set_tag_specifications(Some(vec![
-                e::LaunchTemplateTagSpecificationRequest::builder()
-                    .resource_type(e::ResourceType::Instance)
-                    .set_tags(Some(tags))
-                    .build(),
-            ]));
-        if let Some(a) = &spec.ami_id {
-            data = data.image_id(a.0.clone());
-        }
-        if let Some(m) = market {
-            data = data.instance_market_options(m);
-        }
+        let data = build_request_launch_template_data(spec);
         let out = self
             .ec2
             .create_launch_template()
             .launch_template_name(&spec.name.0)
-            .launch_template_data(data.build())
+            .launch_template_data(data)
             .send()
             .await
             .map_err(sdk)?;
@@ -95,17 +134,12 @@ impl CloudCompute for AwsEc2 {
         id: &TemplateId,
         spec: &TemplateSpec,
     ) -> Result<TemplateVersion> {
+        let data = build_request_launch_template_data(spec);
         let out = self
             .ec2
             .create_launch_template_version()
             .launch_template_id(&id.0)
-            .launch_template_data(
-                e::RequestLaunchTemplateData::builder()
-                    .instance_type(e::InstanceType::from(spec.instance_type.as_str()))
-                    .key_name(spec.key_name.as_str())
-                    .user_data(&spec.user_data_base64)
-                    .build(),
-            )
+            .launch_template_data(data)
             .send()
             .await
             .map_err(sdk)?;
@@ -124,25 +158,29 @@ impl CloudCompute for AwsEc2 {
     }
 
     async fn template_list(&self) -> Result<Vec<TemplateSummary>> {
-        let out = self
+        let mut paginator = self
             .ec2
             .describe_launch_templates()
-            .send()
-            .await
-            .map_err(sdk)?;
-        Ok(out
-            .launch_templates()
-            .iter()
-            .filter_map(|lt| {
-                Some(TemplateSummary {
-                    id: TemplateId(lt.launch_template_id()?.to_string()),
-                    name: TemplateName(lt.launch_template_name()?.to_string()),
-                    latest_version: TemplateVersion(
-                        u64::try_from(lt.latest_version_number().unwrap_or(0)).unwrap_or(0),
-                    ),
-                })
-            })
-            .collect())
+            .into_paginator()
+            .send();
+        let mut acc = Vec::new();
+        while let Some(page) = paginator.next().await {
+            let page = page.map_err(sdk)?;
+            for lt in page.launch_templates() {
+                if let (Some(id), Some(name)) =
+                    (lt.launch_template_id(), lt.launch_template_name())
+                {
+                    acc.push(TemplateSummary {
+                        id: TemplateId(id.to_string()),
+                        name: TemplateName(name.to_string()),
+                        latest_version: TemplateVersion(
+                            u64::try_from(lt.latest_version_number().unwrap_or(0)).unwrap_or(0),
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(acc)
     }
 
     async fn template_get_by_name(&self, name: &TemplateName) -> Result<Option<TemplateSummary>> {
@@ -209,6 +247,25 @@ impl CloudCompute for AwsEc2 {
         if let Some(t) = &req.instance_type_override {
             run = run.instance_type(e::InstanceType::from(t.as_str()));
         }
+        if let Some(m) = req.market_override {
+            let spot = matches!(m, MarketKind::Spot);
+            if spot {
+                let spot_type = match req.spot_type_override {
+                    Some(SpotType::Persistent) => e::SpotInstanceType::Persistent,
+                    _ => e::SpotInstanceType::OneTime,
+                };
+                run = run.instance_market_options(
+                    e::InstanceMarketOptionsRequest::builder()
+                        .market_type(e::MarketType::Spot)
+                        .spot_options(
+                            e::SpotMarketOptions::builder()
+                                .spot_instance_type(spot_type)
+                                .build(),
+                        )
+                        .build(),
+                );
+            }
+        }
         let out = run.send().await.map_err(sdk)?;
         let inst = out
             .instances()
@@ -274,15 +331,32 @@ impl CloudCompute for AwsEc2 {
     }
 
     async fn instance_wait_running(&self, id: &InstanceId, deadline: Deadline) -> Result<Instance> {
+        assert!(deadline.poll_interval.as_secs() > 0, "poll_interval is 0");
+        assert!(deadline.timeout > deadline.poll_interval, "timeout < poll");
         let start = std::time::Instant::now();
+        let max_attempts: u32 = u32::try_from(
+            deadline.timeout.as_secs() / deadline.poll_interval.as_secs() + 2,
+        )
+        .unwrap_or(u32::MAX);
+        let mut attempts: u32 = 0;
         loop {
+            if let Some(c) = &deadline.cancel {
+                if c.is_cancelled() {
+                    return Err(kleya_core::Error::LaunchWaitTimeout {
+                        instance: id.clone(),
+                        elapsed_seconds: u32::try_from(start.elapsed().as_secs())
+                            .unwrap_or(u32::MAX),
+                    });
+                }
+            }
+            attempts = attempts.saturating_add(1);
             let inst = self.instance_describe(id).await?;
             if matches!(inst.state, InstanceState::Running) {
                 return Ok(inst);
             }
-            if start.elapsed() >= deadline.timeout {
+            if start.elapsed() >= deadline.timeout || attempts >= max_attempts {
                 return Err(kleya_core::Error::LaunchWaitTimeout {
-                    instance_id: id.as_str().into(),
+                    instance: id.clone(),
                     elapsed_seconds: u32::try_from(start.elapsed().as_secs()).unwrap_or(u32::MAX),
                 });
             }
@@ -290,7 +364,15 @@ impl CloudCompute for AwsEc2 {
         }
     }
 
+    async fn ensure_default_template(&self, spec: &TemplateSpec) -> Result<TemplateId> {
+        if let Some(existing) = self.template_get_by_name(&spec.name).await? {
+            return Ok(existing.id);
+        }
+        self.template_create(spec).await
+    }
+
     async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId> {
+        let mut existing: Option<String> = None;
         if let Ok(out) = self
             .ec2
             .describe_security_groups()
@@ -300,9 +382,13 @@ impl CloudCompute for AwsEc2 {
         {
             if let Some(g) = out.security_groups().first() {
                 if let Some(id) = g.group_id() {
-                    return Ok(SecurityGroupId(id.to_string()));
+                    existing = Some(id.to_string());
                 }
             }
+        }
+        if let Some(id) = existing {
+            self.authorize_default_ingress(&id).await?;
+            return Ok(SecurityGroupId(id));
         }
         let created = self
             .ec2
@@ -317,8 +403,7 @@ impl CloudCompute for AwsEc2 {
                 .ok_or(AwsError::MissingField("group_id"))?
                 .to_string(),
             Err(err) => {
-                let msg = format!("{err}");
-                if msg.contains("InvalidGroup.Duplicate") {
+                if has_code(&err, "InvalidGroup.Duplicate") {
                     let again = self
                         .ec2
                         .describe_security_groups()
@@ -337,26 +422,7 @@ impl CloudCompute for AwsEc2 {
                 }
             }
         };
-        let auth = self
-            .ec2
-            .authorize_security_group_ingress()
-            .group_id(&id)
-            .ip_permissions(
-                e::IpPermission::builder()
-                    .ip_protocol("tcp")
-                    .from_port(22)
-                    .to_port(22)
-                    .ip_ranges(e::IpRange::builder().cidr_ip("0.0.0.0/0").build())
-                    .build(),
-            )
-            .send()
-            .await;
-        if let Err(err) = auth {
-            let msg = format!("{err}");
-            if !msg.contains("InvalidPermission.Duplicate") {
-                return Err(sdk(err).into());
-            }
-        }
+        self.authorize_default_ingress(&id).await?;
         Ok(SecurityGroupId(id))
     }
 
@@ -380,10 +446,19 @@ impl CloudCompute for AwsEc2 {
             .send()
             .await;
         if let Err(err) = res {
-            let msg = format!("{err}");
-            if !msg.contains("InvalidKeyPair.Duplicate") {
+            if !has_code(&err, "InvalidKeyPair.Duplicate") {
                 return Err(sdk(err).into());
             }
+        }
+        let confirmed = self
+            .ec2
+            .describe_key_pairs()
+            .key_names(name.as_str())
+            .send()
+            .await
+            .map_err(sdk)?;
+        if confirmed.key_pairs().is_empty() {
+            return Err(AwsError::MissingField("key_pair after ensure").into());
         }
         Ok(())
     }

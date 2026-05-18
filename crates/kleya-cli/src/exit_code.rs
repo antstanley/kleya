@@ -11,6 +11,6 @@ pub fn code_for(err: &Error) -> i32 {
         Error::KeyMismatch { .. } | Error::KeyOrphaned { .. } => 7,
         Error::Adapter { .. } => 70,
         Error::Io(_) => 74,
-        Error::UserDataTooLarge { .. } | Error::TemplateRender(_) => 1,
+        Error::UserDataTooLarge { .. } => 1,
     }
 }

@@ -2,6 +2,8 @@
 
 #![allow(missing_docs)]
 
+use crate::model::{instance::InstanceId, key::KeyName};
+
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, thiserror::Error)]
@@ -9,36 +11,35 @@ pub enum Error {
     #[error("config invalid: {reason}")]
     ConfigInvalid { reason: String },
 
-    #[error("user-data is too large: {bytes} > {max} bytes")]
+    #[error("user-data is too large: {bytes} > {max}")]
     UserDataTooLarge { bytes: usize, max: usize },
 
     #[error("instance not found: name={name} region={region}")]
     InstanceNotFound { name: String, region: String },
 
-    #[error("ambiguous handle: {name} matches {count} instances")]
+    #[error("ambiguous handle: {name} matches {} instances", .candidates.len())]
     AmbiguousHandle {
         name: String,
-        count: usize,
-        candidates: Vec<String>,
+        candidates: Vec<InstanceId>,
     },
 
-    #[error("ssh not ready after {elapsed_seconds}s for instance={instance_id}")]
+    #[error("ssh not ready after {elapsed_seconds}s for {instance}")]
     SshNotReady {
-        instance_id: String,
+        instance: InstanceId,
         elapsed_seconds: u32,
     },
 
-    #[error("launch wait timed out after {elapsed_seconds}s for instance={instance_id}")]
+    #[error("launch timed out after {elapsed_seconds}s for {instance}")]
     LaunchWaitTimeout {
-        instance_id: String,
+        instance: InstanceId,
         elapsed_seconds: u32,
     },
 
-    #[error("ssh key mismatch for {name}: local fingerprint differs from cloud record")]
-    KeyMismatch { name: String },
+    #[error("ssh key mismatch for {name}: local fingerprint differs from EC2 record")]
+    KeyMismatch { name: KeyName },
 
-    #[error("ssh key orphaned: {name} is registered with provider but no local private key")]
-    KeyOrphaned { name: String },
+    #[error("ssh key orphaned: {name} is in EC2 but no local private key")]
+    KeyOrphaned { name: KeyName },
 
     #[error("adapter {provider}: {source}")]
     Adapter {
@@ -49,9 +50,6 @@ pub enum Error {
 
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("template render: {0}")]
-    TemplateRender(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -77,8 +75,10 @@ mod tests {
     fn ambiguous_handle_renders_count() {
         let e = Error::AmbiguousHandle {
             name: "devbox".into(),
-            count: 2,
-            candidates: vec!["i-1".into(), "i-2".into()],
+            candidates: vec![
+                InstanceId::new("i-deadbeef").unwrap(),
+                InstanceId::new("i-cafef00d").unwrap(),
+            ],
         };
         let s = format!("{e}");
         assert!(s.contains("devbox"));

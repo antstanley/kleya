@@ -21,10 +21,13 @@ flate2      = { workspace = true }
 base64      = { workspace = true }
 crc32fast   = "1"
 tracing     = { workspace = true }
+tokio-util  = { workspace = true }
+
+[dependencies.kleya-bootstrap-assets]
+path = "../kleya-bootstrap-assets"
 
 [dev-dependencies]
 insta = { workspace = true, features = ["yaml"] }
-kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]

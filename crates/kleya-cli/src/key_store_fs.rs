@@ -122,9 +122,7 @@ impl KeyStore for FsKeyStore {
     fn private_path(&self, name: &KeyName) -> Result<PathBuf> {
         let path = self.path_for(name);
         if !path.exists() {
-            return Err(Error::KeyOrphaned {
-                name: name.to_string(),
-            });
+            return Err(Error::KeyOrphaned { name: name.clone() });
         }
         self.assert_file_mode(&path)?;
         Ok(path)

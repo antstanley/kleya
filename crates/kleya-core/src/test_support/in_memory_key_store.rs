@@ -49,16 +49,12 @@ impl KeyStore for InMemoryKeyStore {
             .expect("mutex")
             .get(name)
             .map(|kp| kp.public.clone())
-            .ok_or_else(|| Error::KeyOrphaned {
-                name: name.to_string(),
-            })
+            .ok_or_else(|| Error::KeyOrphaned { name: name.clone() })
     }
 
     fn private_path(&self, name: &KeyName) -> Result<PathBuf> {
         if !self.exists(name) {
-            return Err(Error::KeyOrphaned {
-                name: name.to_string(),
-            });
+            return Err(Error::KeyOrphaned { name: name.clone() });
         }
         Ok(PathBuf::from(format!("/in-memory/{name}.pem")))
     }

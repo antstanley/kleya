@@ -2,6 +2,7 @@
 
 use clap::Parser as _;
 use std::process::ExitCode;
+use tokio_util::sync::CancellationToken;
 
 use kleya_cli::{clap_args, dispatch, exit_code, logging};
 
@@ -12,7 +13,15 @@ async fn main() -> ExitCode {
         cli.verbose,
         matches!(cli.log_format, clap_args::LogFormat::Json),
     );
-    match dispatch::run(cli).await {
+    let cancel = CancellationToken::new();
+    let cancel_for_signal = cancel.clone();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            tracing::warn!("SIGINT received; cancelling outstanding work");
+            cancel_for_signal.cancel();
+        }
+    });
+    match dispatch::run(cli, cancel).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e);

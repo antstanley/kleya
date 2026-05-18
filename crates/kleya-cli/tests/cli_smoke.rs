@@ -13,7 +13,14 @@ async fn list_subcommand_runs_against_fake_with_no_instances() {
         Arc::new(InMemoryCompute::new());
     let key_store: Arc<dyn kleya_core::ports::key_store::KeyStore> =
         Arc::new(InMemoryKeyStore::new());
-    kleya_cli::dispatch::run_with(cli, cfg, "eu-west-1".into(), compute, key_store)
-        .await
-        .expect("ok");
+    kleya_cli::dispatch::run_with(
+        cli,
+        cfg,
+        "eu-west-1".into(),
+        compute,
+        key_store,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("ok");
 }

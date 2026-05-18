@@ -2,7 +2,7 @@
 set -euxo pipefail
 
 sudo dnf update -y
-sudo dnf install -y git zsh util-linux-user ncurses
+sudo dnf install -y git zsh util-linux-user
 
 # zsh + oh-my-zsh
 sudo chsh -s "$(which zsh)" "$(whoami)"
@@ -39,6 +39,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 
 {% if install_ghostty_terminfo -%}
 # ghostty terminfo (server-side install)
+sudo dnf install -y ncurses
 cat > /tmp/ghostty.terminfo <<'GHOSTTY_TERMINFO_EOF'
 {{ ghostty_terminfo_source }}
 GHOSTTY_TERMINFO_EOF

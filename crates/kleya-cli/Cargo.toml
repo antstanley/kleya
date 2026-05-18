@@ -18,14 +18,15 @@ name = "kleya"
 path = "src/main.rs"
 
 [dependencies]
-kleya-core = { path = "../kleya-core", features = ["test-support"] }
+kleya-core = { path = "../kleya-core" }
 kleya-aws = { path = "../kleya-aws" }
 kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
 aws-config = "1"
 aws-sdk-ec2 = "1"
 aws-sdk-ssm = "1"
 clap = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time", "net"] }
+tokio = { workspace = true, features = ["macros", "rt", "time", "net", "process", "signal"] }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
@@ -44,3 +45,4 @@ shellexpand = "3"
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+kleya-core = { path = "../kleya-core", features = ["test-support"] }

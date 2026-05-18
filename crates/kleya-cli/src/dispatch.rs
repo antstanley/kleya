@@ -18,7 +18,10 @@ use crate::clap_args::{Cli, Cmd, ConfigCmd, TemplateCmd};
 use crate::config_loader;
 use crate::key_store_fs::FsKeyStore;
 
-pub async fn run(cli: Cli) -> kleya_core::Result<()> {
+pub async fn run(
+    cli: Cli,
+    cancel: tokio_util::sync::CancellationToken,
+) -> kleya_core::Result<()> {
     let config = Arc::new(config_loader::load(cli.config.as_deref())?);
     let region = cli
         .region
@@ -39,35 +42,77 @@ pub async fn run(cli: Cli) -> kleya_core::Result<()> {
         region: region.clone(),
     });
     let key_store: Arc<dyn KeyStore> = Arc::new(FsKeyStore::from_config(&config.keys)?);
-    run_with(cli, config, region, compute, key_store).await
+    run_with(cli, config, region, compute, key_store, cancel).await
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn run_with(
     cli: Cli,
     config: Arc<Config>,
     region: String,
     compute: Arc<dyn CloudCompute>,
     key_store: Arc<dyn KeyStore>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> kleya_core::Result<()> {
     match cli.command {
         Cmd::Template { action } => match action {
-            TemplateCmd::Create(_) | TemplateCmd::Update(_) => {
-                Err(kleya_core::Error::ConfigInvalid {
-                    reason: "template create/update via CLI deferred to launch flow".into(),
-                })
+            TemplateCmd::Create(args) => {
+                let spec = build_template_spec(&config, &args.name, &args)?;
+                TemplateService {
+                    compute,
+                    config: config.clone(),
+                }
+                .create(spec)
+                .await
+                .map(|_| ())
             }
-            TemplateCmd::List => {
+            TemplateCmd::Update(args) => {
+                let create_args = crate::clap_args::TemplateCreateArgs {
+                    name: args.name.clone(),
+                    ami: args.ami,
+                    instance_type: args.instance_type,
+                    key_name: args.key_name,
+                    user_data: args.user_data,
+                };
+                let spec = build_template_spec(&config, &args.name, &create_args)?;
                 let svc = TemplateService {
                     compute: compute.clone(),
                     config: config.clone(),
                 };
-                for t in svc.list().await? {
-                    println!("{}\t{}\tv{}", t.id.0, t.name.0, t.latest_version.0);
+                let summary = compute
+                    .template_get_by_name(&kleya_core::model::template::TemplateName(
+                        args.name.clone(),
+                    ))
+                    .await?
+                    .ok_or_else(|| kleya_core::Error::ConfigInvalid {
+                        reason: format!("template '{}' not found", args.name),
+                    })?;
+                svc.update(&summary.id, spec).await.map(|_| ())
+            }
+            TemplateCmd::List(args) => {
+                let svc = TemplateService {
+                    compute: compute.clone(),
+                    config: config.clone(),
+                };
+                let list = svc.list().await?;
+                if args.json {
+                    let json = serde_json::to_string_pretty(&list).map_err(|e| {
+                        kleya_core::Error::Io(std::io::Error::other(e))
+                    })?;
+                    println!("{json}");
+                } else {
+                    for t in list {
+                        println!("{}\t{}\tv{}", t.id.0, t.name.0, t.latest_version.0);
+                    }
                 }
                 Ok(())
             }
-            TemplateCmd::Delete { name, .. } => {
+            TemplateCmd::Delete { name, yes } => {
+                if !yes && !confirm(&format!("delete template '{name}'"))? {
+                    return Err(kleya_core::Error::ConfigInvalid {
+                        reason: "aborted: pass --yes to confirm".into(),
+                    });
+                }
                 TemplateService { compute, config }
                     .delete_by_name(&kleya_core::model::template::TemplateName(name))
                     .await
@@ -75,18 +120,25 @@ pub async fn run_with(
         },
         Cmd::Launch(args) => {
             let svc = LaunchService {
-                compute,
-                key_store,
+                compute: compute.clone(),
+                key_store: key_store.clone(),
                 id_gen: Arc::new(AdjAnimalIdGen),
-                config,
-                bootstrap_tpl: kleya_bootstrap_assets::SETUP_TEMPLATE,
-                ghostty_tinfo: kleya_bootstrap_assets::GHOSTTY_TERMINFO,
+                config: config.clone(),
             };
+            let market = args.market.map(|m| match m {
+                crate::clap_args::Market::OnDemand => {
+                    kleya_core::model::market::MarketKind::OnDemand
+                }
+                crate::clap_args::Market::Spot => kleya_core::model::market::MarketKind::Spot,
+            });
             let res = svc
                 .run(LaunchOpts {
                     template_name: args.template,
-                    instance_name: args.name,
+                    instance_name: args.name.clone(),
+                    instance_type: args.instance_type,
+                    market,
                     dry_run: args.dry_run,
+                    cancel: Some(cancel.clone()),
                 })
                 .await?;
             if let Some(inst) = &res {
@@ -98,6 +150,49 @@ pub async fn run_with(
                         .map_or("-", kleya_core::model::instance::InstanceName::as_str),
                     inst.public_dns.as_deref().unwrap_or("-"),
                 );
+                if args.connect || args.wait_bootstrap {
+                    let endpoint = inst.public_dns.clone().ok_or_else(|| {
+                        kleya_core::Error::ConfigInvalid {
+                            reason: format!("instance {} has no public DNS", inst.id.as_str()),
+                        }
+                    })?;
+                    crate::ssh_probe::probe_ssh_ready(&endpoint, &inst.id).await?;
+                    if args.wait_bootstrap {
+                        let key_name = inst.tags.iter().find(|t| t.key == "kleya:key").map_or_else(
+                            || config.keys.default_key_name.clone(),
+                            |t| t.value.clone(),
+                        );
+                        let key = kleya_core::model::key::KeyName::new(key_name)?;
+                        let key_path = key_store.private_path(&key)?;
+                        crate::ssh_probe::wait_cloud_init(
+                            &key_path,
+                            &config.ssh.user,
+                            &endpoint,
+                        )
+                        .await?;
+                    }
+                    if args.connect {
+                        let svc = ConnectService {
+                            compute,
+                            key_store,
+                            config,
+                            region,
+                        };
+                        let plan = svc
+                            .plan(&ConnectOpts {
+                                handle: inst
+                                    .name
+                                    .as_ref()
+                                    .map_or(inst.id.as_str().to_string(), |n| n.as_str().into()),
+                                explicit_instance_id: Some(inst.id.as_str().into()),
+                                no_tmux: false,
+                                tmux_session: None,
+                            })
+                            .await?;
+                        let err = Command::new(&plan.argv[0]).args(&plan.argv[1..]).exec();
+                        return Err(kleya_core::Error::Io(err));
+                    }
+                }
             }
             Ok(())
         }
@@ -141,16 +236,24 @@ pub async fn run_with(
                 println!("{}", shell_quote(&plan.argv));
                 return Ok(());
             }
+            crate::ssh_probe::probe_ssh_ready(&plan.endpoint, &plan.instance_id).await?;
             let err = Command::new(&plan.argv[0]).args(&plan.argv[1..]).exec();
             Err(kleya_core::Error::Io(err))
         }
-        Cmd::Terminate(args) => TerminateService {
-            compute,
-            region: region.clone(),
+        Cmd::Terminate(args) => {
+            if !args.yes && !confirm(&format!("terminate '{}'", args.name))? {
+                return Err(kleya_core::Error::ConfigInvalid {
+                    reason: "aborted: pass --yes to confirm".into(),
+                });
+            }
+            TerminateService {
+                compute,
+                region: region.clone(),
+            }
+            .terminate_by_handle(&args.name)
+            .await
+            .map(|_| ())
         }
-        .terminate_by_handle(&args.name)
-        .await
-        .map(|_| ()),
         Cmd::Config { action } => match action {
             ConfigCmd::Show => {
                 let s = toml::to_string_pretty(&*config)
@@ -168,6 +271,95 @@ pub async fn run_with(
             }
         },
     }
+}
+
+fn build_template_spec(
+    config: &Arc<Config>,
+    name: &str,
+    args: &crate::clap_args::TemplateCreateArgs,
+) -> kleya_core::Result<kleya_core::model::template::TemplateSpec> {
+    use kleya_core::bootstrap::{
+        encode::{encode_user_data, encode_user_data_passthrough},
+        render::{render, BootstrapVars},
+    };
+    use kleya_core::model::{
+        key::KeyName,
+        market::{MarketKind, SpotType},
+        region::AmiId,
+        tag::Tag,
+        template::{TemplateName, TemplateSpec},
+    };
+    let template_cfg = config.templates.iter().find(|t| t.name == name);
+    let key_name = KeyName::new(
+        args.key_name
+            .clone()
+            .or_else(|| template_cfg.and_then(|t| t.key_name.clone()))
+            .unwrap_or_else(|| config.keys.default_key_name.clone()),
+    )?;
+    let instance_type = args
+        .instance_type
+        .clone()
+        .or_else(|| template_cfg.and_then(|t| t.instance_type.clone()))
+        .unwrap_or_else(|| config.defaults.instance_type.clone());
+    let ami_id = args
+        .ami
+        .clone()
+        .or_else(|| template_cfg.and_then(|t| t.ami_id.clone()))
+        .map(AmiId);
+    let user_data_b64 = if let Some(path) = &args.user_data {
+        let bytes = std::fs::read(path)?;
+        let raw = String::from_utf8(bytes).map_err(|e| kleya_core::Error::ConfigInvalid {
+            reason: format!("user-data not utf-8: {e}"),
+        })?;
+        encode_user_data_passthrough(&raw)?
+    } else {
+        let vars = BootstrapVars::default_with(kleya_bootstrap_assets::GHOSTTY_TERMINFO);
+        encode_user_data(&render(&vars)?)?
+    };
+    let mut tags = vec![Tag::new("Project", "kleya")?];
+    if let Some(t) = template_cfg {
+        for tag in &t.tags {
+            tags.push(Tag::new(&tag.key, &tag.value)?);
+        }
+    }
+    let market = match config.defaults.market.as_str() {
+        "on-demand" => MarketKind::OnDemand,
+        _ => MarketKind::Spot,
+    };
+    let spot_type = match config.defaults.spot_type.as_str() {
+        "persistent" => SpotType::Persistent,
+        _ => SpotType::OneTime,
+    };
+    Ok(TemplateSpec {
+        name: TemplateName(name.to_string()),
+        ami_id,
+        ami_alias: None,
+        instance_type,
+        key_name,
+        security_group_ids: template_cfg
+            .and_then(|t| t.security_group_ids.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(kleya_core::model::region::SecurityGroupId)
+            .collect(),
+        subnet_id: template_cfg
+            .and_then(|t| t.subnet_id.clone())
+            .map(kleya_core::model::region::SubnetId),
+        market,
+        spot_type,
+        tags,
+        user_data_base64: user_data_b64,
+    })
+}
+
+fn confirm(action: &str) -> kleya_core::Result<bool> {
+    use std::io::Write as _;
+    eprint!("{action}? [y/N] ");
+    std::io::stderr().flush()?;
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf)?;
+    let answer = buf.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
 }
 
 fn shell_quote(argv: &[String]) -> String {

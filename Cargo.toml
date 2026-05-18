@@ -36,7 +36,8 @@ serde_yaml = "0.9"
 toml = "0.8"
 jsonc-parser = { version = "0.23", features = ["serde"] }
 async-trait = "0.1"
-tokio = { version = "1", features = ["macros", "rt", "time", "sync", "net", "process"] }
+tokio = { version = "1", features = ["macros", "rt", "time", "sync", "net", "process", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4", features = ["derive", "env"] }

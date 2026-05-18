@@ -200,6 +200,16 @@ impl CloudCompute for InMemoryCompute {
         Ok(i.clone())
     }
 
+    async fn ensure_default_template(&self, spec: &TemplateSpec) -> Result<TemplateId> {
+        {
+            let s = self.state.lock().expect("mutex");
+            if let Some((id, _, _)) = s.templates.get(&spec.name) {
+                return Ok(id.clone());
+            }
+        }
+        self.template_create(spec).await
+    }
+
     async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId> {
         let mut s = self.state.lock().expect("mutex");
         let next = s.sgs.len() + 1;

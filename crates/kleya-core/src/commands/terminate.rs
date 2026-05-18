@@ -31,14 +31,10 @@ impl TerminateService {
                     });
                 }
                 1 => candidates[0].id.clone(),
-                n => {
+                _ => {
                     return Err(Error::AmbiguousHandle {
                         name: handle.into(),
-                        count: n,
-                        candidates: candidates
-                            .iter()
-                            .map(|i| i.id.as_str().to_string())
-                            .collect(),
+                        candidates: candidates.into_iter().map(|i| i.id).collect(),
                     });
                 }
             }

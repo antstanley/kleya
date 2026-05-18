@@ -6,6 +6,7 @@ use crate::model::{
     template::TemplateName,
 };
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub struct LaunchRequest {
@@ -18,8 +19,9 @@ pub struct LaunchRequest {
     pub key_name: KeyName,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Deadline {
     pub timeout: Duration,
     pub poll_interval: Duration,
+    pub cancel: Option<CancellationToken>,
 }

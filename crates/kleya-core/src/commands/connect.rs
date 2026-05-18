@@ -7,9 +7,11 @@ use crate::error::Error;
 use crate::limits::{
     SSH_PROBE_INTERVAL_SECONDS, SSH_PROBE_PORT, SSH_PROBE_TCP_TIMEOUT_MS, SSH_PROBE_TIMEOUT_SECONDS,
 };
+use once_cell::sync::Lazy;
+use regex::Regex;
 use crate::model::instance::{Instance, InstanceFilter, InstanceId};
 use crate::model::key::KeyName;
-use crate::model::tag::{KLEYA_TAG_KEY, KLEYA_TAG_MANAGED};
+use crate::model::tag::KLEYA_TAG_KEY;
 use crate::ports::cloud_compute::CloudCompute;
 use crate::ports::key_store::KeyStore;
 use crate::Result;
@@ -35,8 +37,21 @@ pub struct ConnectOpts {
     pub tmux_session: Option<String>,
 }
 
+#[allow(clippy::expect_used, clippy::disallowed_methods)]
+static TMUX_SESSION_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z0-9_-]{1,63}$").expect("static regex compiles"));
+
 impl ConnectService {
     pub async fn plan(&self, opts: &ConnectOpts) -> Result<ConnectPlan> {
+        if let Some(s) = &opts.tmux_session {
+            if !TMUX_SESSION_RE.is_match(s) {
+                return Err(Error::ConfigInvalid {
+                    reason: format!(
+                        "tmux session '{s}' must match ^[a-z0-9_-]{{1,63}}$"
+                    ),
+                });
+            }
+        }
         let inst = self.resolve(opts).await?;
         let key_name = self.resolve_key(&inst)?;
         let key_path = self.key_store.private_path(&key_name)?;
@@ -84,13 +99,9 @@ impl ConnectService {
                 .ok_or_else(|| Error::ConfigInvalid {
                     reason: "candidates length 1 but iterator empty".into(),
                 }),
-            n => Err(Error::AmbiguousHandle {
+            _ => Err(Error::AmbiguousHandle {
                 name: opts.handle.clone(),
-                count: n,
-                candidates: candidates
-                    .iter()
-                    .map(|i| i.id.as_str().to_string())
-                    .collect(),
+                candidates: candidates.into_iter().map(|i| i.id).collect(),
             }),
         }
     }
@@ -104,19 +115,15 @@ impl ConnectService {
         if let Some(n) = tagged {
             return KeyName::new(n);
         }
-        let managed = inst
-            .tags
-            .iter()
-            .any(|t| t.key == KLEYA_TAG_MANAGED && t.value == "true");
-        if !managed {
+        let default = self.config.keys.default_key_name.trim();
+        if default.is_empty() {
             return Err(Error::ConfigInvalid {
-                reason: format!(
-                    "instance {} not managed by kleya; pass --instance-id and configure key",
-                    inst.id.as_str()
-                ),
+                reason: "no kleya:key tag on instance and no keys.default_key_name in config; \
+                         re-launch via kleya launch or pass --instance-id with a known key"
+                    .into(),
             });
         }
-        KeyName::new(self.config.keys.default_key_name.clone())
+        KeyName::new(default)
     }
 
     fn build_argv(
@@ -188,13 +195,14 @@ mod tests {
             key_store,
             id_gen: Arc::new(FakeIdGen::new()),
             config: cfg,
-            bootstrap_tpl: "echo hi",
-            ghostty_tinfo: "",
         };
         l.run(LaunchOpts {
             template_name: None,
             instance_name: Some("box".into()),
+            instance_type: None,
+            market: None,
             dry_run: false,
+            cancel: None,
         })
         .await
         .unwrap();
