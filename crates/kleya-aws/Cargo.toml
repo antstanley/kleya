@@ -9,3 +9,20 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+kleya-core = { path = "../kleya-core" }
+aws-config = "1"
+aws-sdk-ec2 = "1"
+aws-sdk-ssm = "1"
+aws-credential-types = "1"
+aws-smithy-types = "1"
+aws-smithy-runtime-api = "1"
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+serial_test = "3"

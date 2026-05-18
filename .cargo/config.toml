@@ -1,0 +1,7 @@
+[build]
+incremental = false
+
+[profile.dev]
+incremental = false
+debug = 0
+strip = "debuginfo"
