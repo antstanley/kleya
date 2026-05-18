@@ -75,3 +75,35 @@ jobs:
             echo "error: evals/ leaked into the .skill package" >&2
             exit 1
           fi
+      - name: Smoke-test install-skill.sh against a fake $HOME
+        run: |
+          set -eu
+          FAKE=$(mktemp -d)
+          mkdir -p "$FAKE/.claude" "$FAKE/.codex" "$FAKE/.cursor" \
+                   "$FAKE/.config/opencode" "$FAKE/.agents" "$FAKE/bin"
+          # Stub `curl` so the installer pulls the freshly-built archive
+          # without hitting the network.
+          cat >"$FAKE/bin/curl" <<EOF
+          #!/bin/sh
+          while [ \$# -gt 0 ]; do
+            case "\$1" in
+              -o) out="\$2"; shift 2 ;;
+              -*) shift ;;
+              *)  shift ;;
+            esac
+          done
+          cp "$PWD/target/skill-dist/using-kleya.skill" "\$out"
+          EOF
+          chmod +x "$FAKE/bin/curl"
+          PATH="$FAKE/bin:$PATH" HOME="$FAKE" sh scripts/install-skill.sh
+          # Verify each detected target got the SKILL.md / AGENTS.md update.
+          test -f "$FAKE/.claude/skills/using-kleya/SKILL.md"
+          test -f "$FAKE/.cursor/skills/using-kleya/SKILL.md"
+          test -f "$FAKE/.config/opencode/skills/using-kleya/SKILL.md"
+          test -f "$FAKE/.agents/skills/using-kleya/SKILL.md"
+          grep -q 'using-kleya skill' "$FAKE/.codex/AGENTS.md"
+          # Re-run and confirm AGENTS.md stays byte-identical (idempotent).
+          before=$(sha256sum "$FAKE/.codex/AGENTS.md" | cut -d' ' -f1)
+          PATH="$FAKE/bin:$PATH" HOME="$FAKE" sh scripts/install-skill.sh
+          after=$(sha256sum "$FAKE/.codex/AGENTS.md" | cut -d' ' -f1)
+          [ "$before" = "$after" ] || { echo "AGENTS.md install is not idempotent" >&2; exit 1; }

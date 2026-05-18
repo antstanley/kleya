@@ -136,6 +136,25 @@ kleya config show       # print the merged config (defaults + file + flags) as T
 kleya config path       # print the path of the file that was actually loaded (or "<defaults>")
 ```
 
+## Agent skill (optional)
+
+If you drive kleya from a coding agent (Claude Code, Cursor, OpenCode, Codex), you can install a companion **skill** that teaches the agent the launch / connect / templates / unattended-handoff workflows so it stops reaching for raw `aws ec2` commands.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/antstanley/kleya/releases/download/v0.1.0-rc.1/install-skill.sh | sh
+```
+
+The installer autodetects which agents you have configured (it looks for `~/.claude/`, `~/.cursor/`, `~/.config/opencode/`, `~/.agents/`, `~/.codex/`) and writes the skill to each one's native location. Override with `--target=claude,opencode` (comma-separated) or `--target=all`.
+
+- `~/.claude/skills/using-kleya/SKILL.md` — Claude Code
+- `~/.cursor/skills/using-kleya/SKILL.md` — Cursor (also picks up the Claude path)
+- `~/.config/opencode/skills/using-kleya/SKILL.md` — OpenCode
+- `~/.agents/skills/using-kleya/SKILL.md` — `.agents` folder spec (cross-agent fallback)
+- `~/.codex/AGENTS.md` — Codex (appended between idempotent marker comments)
+
+Restart your agent after install. To pin a specific version, pass `--version=v0.1.0-rc.1`.
+
 ## Configuration
 
 Optional. `kleya launch` with no flags and no config file launches a working dev box.

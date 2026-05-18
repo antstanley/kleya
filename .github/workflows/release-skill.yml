@@ -27,9 +27,19 @@ jobs:
           persist-credentials: false
       - name: Package the skill
         run: python3 scripts/package_skill.py skills/using-kleya -o target/skill-dist
+      - name: Prepare versioned installer
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # Substitute the release tag into the installer so `curl ... | sh`
+          # pulls a matching .skill rather than always grabbing "latest".
+          sed "s|__VERSION__|${TAG}|" scripts/install-skill.sh \
+            > target/skill-dist/install-skill.sh
+          chmod +x target/skill-dist/install-skill.sh
       - name: Upload to release
         run: |
           gh release upload \
             "${{ github.event.release.tag_name }}" \
             target/skill-dist/using-kleya.skill \
+            target/skill-dist/install-skill.sh \
             --clobber
