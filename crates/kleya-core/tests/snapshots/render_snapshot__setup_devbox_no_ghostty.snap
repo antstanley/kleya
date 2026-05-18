@@ -1,0 +1,41 @@
+---
+source: crates/kleya-core/tests/render_snapshot.rs
+assertion_line: 18
+expression: out
+---
+#!/usr/bin/env bash
+set -euxo pipefail
+
+sudo dnf update -y
+sudo dnf install -y git zsh util-linux-user ncurses
+
+# zsh + oh-my-zsh
+sudo chsh -s "$(which zsh)" "$(whoami)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+git clone https://github.com/zsh-users/zsh-autosuggestions   ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+sed -i 's/(git)/(git zsh-autosuggestions zsh-syntax-highlighting)/g' ~/.zshrc
+
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+sudo dnf install -y gh tmux
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+echo 'export PATH="$PATH:$HOME/.cargo/bin"' >> ~/.zshrc
+
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install 24
+
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+"$HOME/.cargo/bin/cargo" binstall -y --disable-telemetry --strategies crate-meta-data jj-cli
+
+sudo dnf install -y python3.14 python3.14-pip
+echo 'alias python=python3.14' >> ~/.zshrc
+echo 'alias pip=pip3.14' >> ~/.zshrc
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+
+
+curl -fsSL https://claude.ai/install.sh | bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc

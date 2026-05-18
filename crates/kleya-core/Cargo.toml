@@ -16,6 +16,11 @@ serde       = { workspace = true }
 regex       = { workspace = true }
 once_cell   = { workspace = true }
 async-trait = { workspace = true }
+minijinja   = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true, features = ["yaml"] }
+kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
 
 [features]
 default = []
