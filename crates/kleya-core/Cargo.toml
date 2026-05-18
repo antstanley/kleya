@@ -11,7 +11,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
-serde     = { workspace = true }
-regex     = { workspace = true }
-once_cell = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true }
+regex       = { workspace = true }
+once_cell   = { workspace = true }
+async-trait = { workspace = true }
+
+[features]
+default = []
+test-support = []

@@ -9,10 +9,15 @@
     clippy::non_std_lazy_statics
 )]
 
+pub mod bootstrap;
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod limits;
 pub mod model;
+pub mod ports;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use config::Config;
 pub use error::{Error, Result};
