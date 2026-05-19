@@ -1,17 +1,24 @@
 # kleya
 
-A small Rust CLI that bootstraps AWS EC2 spot instances as Claude-Code-ready development boxes. Zero-config by default — `kleya launch` provisions an Amazon Linux 2023 ARM instance, installs zsh / oh-my-zsh / tmux / git / rust / node / jj / python / uv / Claude Code, and prints an `ssh` invocation to attach.
+A small Rust CLI that bootstraps short-lived cloud development boxes for agentic coding sessions. Zero-config by default — `kleya launch` provisions a spot / preemptible instance, runs an embedded bootstrap that installs the usual agent toolchain (zsh, oh-my-zsh, tmux, git, rust, node, jj, python, uv, Claude Code), and prints an `ssh` invocation to attach.
 
 > **Status:** v0.1.0-rc.2 prerelease. Unix only (Linux + macOS, x86_64 + aarch64). Windows is out of scope.
 
+**Provider support.** kleya is built around a provider-neutral `CloudCompute` port in `kleya-core`. Cloud-specific code lives in adapter crates (`kleya-aws`, and any future siblings) that depend only on `kleya-core` — adding a new provider is a new crate, not a refactor of the binary. **The only adapter shipped in v0.1 is AWS EC2** (Amazon Linux 2023, ARM or x86); the design and tradeoffs of the port are documented in [`docs/specs/04-provider-port.md`](docs/specs/04-provider-port.md). The rest of this README assumes the AWS adapter; sections that are adapter-specific are marked accordingly.
+
 ## Prerequisites
 
+**Always required:**
+
+- The `ssh` binary on your `PATH` (kleya `exec`s it for `connect`).
+- `tmux` on the **remote** instance (installed by the bootstrap script).
+
+**AWS adapter (the only provider in v0.1):**
+
 - An AWS account with:
-  - Programmatic credentials (env vars, profile, or instance role)
-  - A **default VPC** in the region you launch into
-  - Permission to call `ec2:*` for templates, instances, security groups, key pairs, and `ssm:GetParameter` for the AL2023 AMI alias
-- The `ssh` binary on your `PATH` (kleya `exec`s it for `connect`)
-- `tmux` on the **remote** instance (installed by the bootstrap script)
+  - Working credentials reachable through the SDK default chain (env vars, profile, IAM Identity Center cached token, `aws login` console credentials, `credential_process` helper, web-identity OIDC, or IMDS — see [`docs/specs/11-credentials-and-sso.md`](docs/specs/11-credentials-and-sso.md)). Authentication happens outside kleya (`aws sso login`, `aws login`, `aws configure`, etc.).
+  - A **default VPC** in the region you launch into.
+  - Permission to call `ec2:*` for templates, instances, security groups, key pairs, and `ssm:GetParameter` for the AL2023 AMI alias.
 
 ## Install
 
@@ -67,6 +74,8 @@ kleya terminate <name>
 
 ## Commands
 
+The CLI surface is provider-neutral by intent — every subcommand maps onto a method on `CloudCompute`. The concrete defaults (`m8g.xlarge` instance type, `amazon-linux-2023-arm64` AMI alias, etc.) are AWS-shaped because AWS is the only adapter in v0.1; an additional provider would resolve them from its own catalog.
+
 ### `kleya launch`
 
 Launches a spot (default) instance from a template.
@@ -99,10 +108,10 @@ kleya list [--json]
 
 ### `kleya connect`
 
-Resolves a handle (name or `i-...`) to a managed instance, looks up the right private key via the `kleya:key` tag, and `exec`s ssh.
+Resolves a handle (name or a provider-native instance id, e.g. `i-…` for AWS) to a managed instance, looks up the right private key via the `kleya:key` tag, and `exec`s ssh.
 
 ```
-kleya connect <name> [--print] [--no-tmux] [--tmux-session <s>] [--instance-id i-...]
+kleya connect <name> [--print] [--no-tmux] [--tmux-session <s>] [--instance-id <id>]
 ```
 
 | Flag | Meaning |
@@ -110,7 +119,7 @@ kleya connect <name> [--print] [--no-tmux] [--tmux-session <s>] [--instance-id i
 | `--print` | Print the ssh argv and exit; don't actually connect |
 | `--no-tmux` | Skip the `tmux new-session -A` wrapper |
 | `--tmux-session <s>` | Override the configured tmux session name |
-| `--instance-id i-...` | Resolve by AWS instance id instead of name (useful for unmanaged instances) |
+| `--instance-id <id>` | Resolve by the provider's native instance id instead of name. AWS adapter accepts `i-…`. Useful for unmanaged instances. |
 
 ### `kleya terminate`
 
@@ -122,12 +131,16 @@ Confirms interactively unless `--yes` is passed.
 
 ### `kleya template`
 
+Templates capture provider-specific launch configuration so `kleya launch --template <n>` is a one-shot. On the AWS adapter these map to EC2 Launch Templates.
+
 ```
 kleya template create --name <n> [--ami ami-...] [--instance-type <t>] [--key-name <k>] [--user-data <path>]
 kleya template update --name <n> [...same flags...]
 kleya template list [--json]
 kleya template delete <name> [--yes]
 ```
+
+The `--ami` flag is AWS-adapter-specific; other adapters expose their own equivalent (machine image, machine type, project / zone, …).
 
 ### `kleya config`
 
@@ -173,15 +186,17 @@ TOML, YAML, JSON, and JSONC are all accepted. Format is detected from the extens
 
 ### Example (`~/.config/kleya/config.toml`)
 
+Field names marked _(AWS adapter)_ are interpreted by the AWS adapter; other adapters will accept their own equivalents.
+
 ```toml
-default_region  = "eu-west-1"
-default_profile = "default"
+default_region  = "eu-west-1"    # AWS region for the AWS adapter
+default_profile = "default"      # AWS named profile (AWS adapter)
 
 [defaults]
 instance_type = "m8g.xlarge"
-market        = "spot"       # or "on-demand"
-spot_type     = "one-time"   # or "persistent"
-ami_alias     = "amazon-linux-2023-arm64"
+market        = "spot"           # or "on-demand"
+spot_type     = "one-time"       # or "persistent"
+ami_alias     = "amazon-linux-2023-arm64"   # AWS adapter — SSM-resolved at launch
 
 [bootstrap]
 # Optional path to a custom user-data script. If set, install_ghostty_terminfo
@@ -219,10 +234,10 @@ value = "gpu-experiments"
 | Variable | Effect |
 |---|---|
 | `KLEYA_CONFIG` | Path to config file (overrides default search) |
-| `KLEYA_PROFILE` | AWS profile to use (overrides `default_profile`) |
-| `KLEYA_REGION` | AWS region (overrides `default_region`) |
+| `KLEYA_PROFILE` | Provider profile to use (overrides `default_profile`). On the AWS adapter, this is the AWS named profile. |
+| `KLEYA_REGION` | Provider region (overrides `default_region`). AWS adapter passes this to the SDK. |
 | `KLEYA_LOG_FORMAT` | `text` (default) or `json` |
-| `AWS_*` | Standard AWS SDK env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, etc.) |
+| `AWS_*` | Standard AWS SDK env vars (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, …) — honoured by the SDK itself; kleya does not read them directly. |
 
 ## Exit codes
 
@@ -235,20 +250,30 @@ value = "gpu-experiments"
 | 4 | Handle ambiguous (multiple instances match the name) |
 | 5 | SSH not ready within timeout (default 180s) |
 | 6 | Launch wait timed out (default 600s) |
-| 7 | Key mismatch (local fingerprint differs from EC2) or key orphaned (EC2 key present, local pem missing) |
-| 70 | AWS adapter error (SDK / network / API) |
+| 7 | Key mismatch (local fingerprint differs from the provider's record) or key orphaned (provider has the key, local pem missing) |
+| 70 | Provider adapter error (SDK / network / API). On the AWS adapter this includes anything `aws-sdk-ec2` / `aws-sdk-ssm` surfaces. |
 | 74 | I/O error |
 | 130 | Cancelled (Ctrl-C / SIGINT) |
 
 ## Troubleshooting
 
-**`Adapter aws-ec2: ... no default VPC`.** kleya's zero-config path assumes a default VPC in the chosen region. Either create one (`aws ec2 create-default-vpc`) or specify `subnet_id` and `security_group_ids` in a `[[templates]]` block.
+Most adapter-specific failures surface as `Error::Adapter { provider, source }` (exit code 70) with the provider's own error in the `source` field. The list below is for AWS-adapter-specific cases that have a known kleya-side remediation.
 
-**`KeyMismatch`.** Your local `~/.config/kleya/keys/<name>.pem` fingerprint differs from what EC2 has registered. Either delete the local pem (kleya will treat as orphaned and you can re-import the EC2 public half manually), or delete the EC2 key pair (`aws ec2 delete-key-pair --key-name <name>`) and let kleya regenerate.
+**`Adapter aws-ec2: ... no default VPC` (AWS adapter).** kleya's zero-config path assumes a default VPC in the chosen region. Either create one (`aws ec2 create-default-vpc`) or specify `subnet_id` and `security_group_ids` in a `[[templates]]` block.
 
-**`SshNotReady` after 180s.** The probe couldn't reach port 22. Check the security group allows your IP and that the instance actually started (`kleya list` or the EC2 console).
+**`KeyMismatch`.** Your local `~/.config/kleya/keys/<name>.pem` fingerprint differs from what the provider has registered. Either delete the local pem (kleya will treat as orphaned and you can re-import the provider's public half manually), or remove the provider-side key and let kleya regenerate on next launch (`kleya launch --regenerate-key`).
+
+**`SshNotReady` after 180s.** The probe couldn't reach port 22. Check the provider's firewall / security group allows your IP and that the instance actually started (`kleya list` or the provider console).
 
 **`launch --connect` drops you mid-bootstrap.** Use `--wait-bootstrap` (the default when `--connect` is set unless `--no-wait-bootstrap` is also passed). The wait runs `cloud-init status --wait` over SSH before returning control.
+
+## Design
+
+The full design lives in [`docs/specs/`](docs/specs/) — eleven numbered pages indexed by [`docs/README.md`](docs/README.md). Start with [`docs/specs/00-overview.md`](docs/specs/00-overview.md). The pages most relevant to extending kleya:
+
+- [`04-provider-port.md`](docs/specs/04-provider-port.md) — the `CloudCompute` trait, idempotency contract, and what a new adapter has to implement.
+- [`06-launch-and-connect.md`](docs/specs/06-launch-and-connect.md) — launch orchestration, key lifecycle, SSH probe.
+- [`11-credentials-and-sso.md`](docs/specs/11-credentials-and-sso.md) — credentials chain, profile / region resolution, and why kleya never owns login.
 
 ## License
 
@@ -256,4 +281,4 @@ Dual-licensed under `Apache-2.0 OR MIT` per [`Cargo.toml`](Cargo.toml#L13). You 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for repo layout, tooling, conventions, and the release process.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repo layout, tooling, conventions, and the release process. The canonical design spec at [`docs/specs/`](docs/specs/) is the source of truth for non-trivial changes.
