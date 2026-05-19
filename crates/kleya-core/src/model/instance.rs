@@ -18,10 +18,11 @@ pub struct InstanceName(String);
 impl InstanceName {
     pub fn new(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
-        assert!(
-            !raw.is_empty(),
-            "InstanceName::new called with empty string"
-        );
+        if raw.is_empty() {
+            return Err(Error::ConfigInvalid {
+                reason: "instance name empty".into(),
+            });
+        }
         if raw.len() > INSTANCE_NAME_BYTES_MAX {
             return Err(Error::ConfigInvalid {
                 reason: format!("instance name '{raw}' exceeds {INSTANCE_NAME_BYTES_MAX} bytes"),
@@ -111,6 +112,13 @@ mod tests {
         assert!(InstanceName::new("DevBox").is_err());
         assert!(InstanceName::new("dev_box").is_err());
         assert!(InstanceName::new("-devbox").is_err());
+    }
+
+    #[test]
+    fn name_returns_err_on_empty_string() {
+        let err = InstanceName::new("").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("empty"), "got: {msg}");
     }
 
     #[test]

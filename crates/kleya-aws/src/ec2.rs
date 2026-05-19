@@ -126,9 +126,10 @@ impl CloudCompute for AwsEc2 {
         let lt = out
             .launch_template()
             .ok_or(AwsError::MissingField("launch_template"))?;
-        Ok(TemplateId(
-            lt.launch_template_id().unwrap_or_default().to_string(),
-        ))
+        let id = lt
+            .launch_template_id()
+            .ok_or(AwsError::MissingField("launch_template_id"))?;
+        Ok(TemplateId(id.to_string()))
     }
 
     async fn template_update(
@@ -156,7 +157,8 @@ impl CloudCompute for AwsEc2 {
             .send()
             .await
             .map_err(sdk)?;
-        Ok(TemplateVersion(u64::try_from(ver).unwrap_or(0)))
+        let ver_u64 = u64::try_from(ver).map_err(|_| AwsError::MissingField("version_number"))?;
+        Ok(TemplateVersion(ver_u64))
     }
 
     async fn template_list(&self) -> Result<Vec<TemplateSummary>> {
@@ -165,37 +167,50 @@ impl CloudCompute for AwsEc2 {
         while let Some(page) = paginator.next().await {
             let page = page.map_err(sdk)?;
             for lt in page.launch_templates() {
-                if let (Some(id), Some(name)) = (lt.launch_template_id(), lt.launch_template_name())
-                {
-                    acc.push(TemplateSummary {
-                        id: TemplateId(id.to_string()),
-                        name: TemplateName(name.to_string()),
-                        latest_version: TemplateVersion(
-                            u64::try_from(lt.latest_version_number().unwrap_or(0)).unwrap_or(0),
-                        ),
-                    });
-                }
+                let (Some(id), Some(name)) = (lt.launch_template_id(), lt.launch_template_name())
+                else {
+                    continue;
+                };
+                let Ok(version) = u64::try_from(lt.latest_version_number().unwrap_or(0)) else {
+                    continue;
+                };
+                acc.push(TemplateSummary {
+                    id: TemplateId(id.to_string()),
+                    name: TemplateName(name.to_string()),
+                    latest_version: TemplateVersion(version),
+                });
             }
         }
         Ok(acc)
     }
 
     async fn template_get_by_name(&self, name: &TemplateName) -> Result<Option<TemplateSummary>> {
-        let out = self
+        let out = match self
             .ec2
             .describe_launch_templates()
             .launch_template_names(&name.0)
             .send()
-            .await;
-        let Ok(out) = out else { return Ok(None) };
-        Ok(out.launch_templates().first().and_then(|lt| {
-            Some(TemplateSummary {
-                id: TemplateId(lt.launch_template_id()?.to_string()),
-                name: name.clone(),
-                latest_version: TemplateVersion(
-                    u64::try_from(lt.latest_version_number().unwrap_or(0)).unwrap_or(0),
-                ),
-            })
+            .await
+        {
+            Ok(out) => out,
+            Err(err) if has_code(&err, "InvalidLaunchTemplateName.NotFoundException") => {
+                return Ok(None);
+            }
+            Err(err) => return Err(sdk(err).into()),
+        };
+        let Some(lt) = out.launch_templates().first() else {
+            return Ok(None);
+        };
+        let id = lt
+            .launch_template_id()
+            .ok_or(AwsError::MissingField("launch_template_id"))?;
+        let raw_version = lt.latest_version_number().unwrap_or(0);
+        let latest_version = u64::try_from(raw_version)
+            .map_err(|_| AwsError::MissingField("latest_version_number"))?;
+        Ok(Some(TemplateSummary {
+            id: TemplateId(id.to_string()),
+            name: name.clone(),
+            latest_version: TemplateVersion(latest_version),
         }))
     }
 
@@ -366,18 +381,22 @@ impl CloudCompute for AwsEc2 {
 
     async fn ensure_default_security_group(&self, name: &str) -> Result<SecurityGroupId> {
         let mut existing: Option<String> = None;
-        if let Ok(out) = self
+        match self
             .ec2
             .describe_security_groups()
             .group_names(name)
             .send()
             .await
         {
-            if let Some(g) = out.security_groups().first() {
-                if let Some(id) = g.group_id() {
-                    existing = Some(id.to_string());
+            Ok(out) => {
+                if let Some(g) = out.security_groups().first() {
+                    if let Some(id) = g.group_id() {
+                        existing = Some(id.to_string());
+                    }
                 }
             }
+            Err(err) if has_code(&err, "InvalidGroup.NotFound") => {}
+            Err(err) => return Err(sdk(err).into()),
         }
         if let Some(id) = existing {
             self.authorize_default_ingress(&id).await?;
@@ -420,16 +439,17 @@ impl CloudCompute for AwsEc2 {
     }
 
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()> {
-        if let Ok(out) = self
+        match self
             .ec2
             .describe_key_pairs()
             .key_names(name.as_str())
             .send()
             .await
         {
-            if !out.key_pairs().is_empty() {
-                return Ok(());
-            }
+            Ok(out) if !out.key_pairs().is_empty() => return Ok(()),
+            Ok(_) => {}
+            Err(err) if has_code(&err, "InvalidKeyPair.NotFound") => {}
+            Err(err) => return Err(sdk(err).into()),
         }
         let res = self
             .ec2
@@ -457,13 +477,17 @@ impl CloudCompute for AwsEc2 {
     }
 
     async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>> {
-        let out = self
+        let out = match self
             .ec2
             .describe_key_pairs()
             .key_names(name.as_str())
             .send()
-            .await;
-        let Ok(out) = out else { return Ok(None) };
+            .await
+        {
+            Ok(out) => out,
+            Err(err) if has_code(&err, "InvalidKeyPair.NotFound") => return Ok(None),
+            Err(err) => return Err(sdk(err).into()),
+        };
         Ok(out
             .key_pairs()
             .first()

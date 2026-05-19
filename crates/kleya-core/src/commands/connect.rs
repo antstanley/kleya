@@ -204,7 +204,7 @@ mod tests {
             compute,
             key_store,
             id_gen: Arc::new(FakeIdGen::new()),
-            config: cfg,
+            config: cfg.clone(),
         };
         l.run(LaunchOpts {
             template_name: None,
@@ -228,7 +228,16 @@ mod tests {
             .await
             .expect("plan ok");
         assert!(plan.argv.iter().any(|a| a == "tmux"));
-        assert!(plan.argv.iter().any(|a| a == "kleya"));
+        let dash_s = plan
+            .argv
+            .iter()
+            .position(|a| a == "-s")
+            .expect("argv contains -s");
+        assert_eq!(
+            plan.argv.get(dash_s + 1),
+            Some(&cfg.ssh.tmux_session),
+            "tmux session arg should match Config default"
+        );
     }
 
     #[tokio::test]
