@@ -14,6 +14,8 @@ use kleya_core::ports::id_gen::AdjAnimalIdGen;
 use kleya_core::ports::key_store::KeyStore;
 use kleya_core::ParsedConfig;
 
+use clap::CommandFactory as _;
+
 use crate::clap_args::{Cli, Cmd, ConfigCmd, TemplateCmd};
 use crate::config_loader;
 use crate::key_store_fs::FsKeyStore;
@@ -265,6 +267,12 @@ pub async fn run_with(
                 Ok(())
             }
         },
+        Cmd::Completions(args) => {
+            let _ = (config, region, compute, key_store, cancel);
+            let mut cmd = Cli::command();
+            clap_complete::generate(args.shell, &mut cmd, "kleya", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
 

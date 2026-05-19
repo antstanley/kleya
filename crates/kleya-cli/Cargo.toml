@@ -25,6 +25,7 @@ aws-config = { version = "1", features = ["credentials-login"] }
 aws-sdk-ec2 = "1"
 aws-sdk-ssm = "1"
 clap = { workspace = true }
+clap_complete = "4"
 tokio = { workspace = true, features = ["macros", "rt", "time", "net", "process", "signal"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

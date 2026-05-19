@@ -43,6 +43,15 @@ pub enum Cmd {
         #[command(subcommand)]
         action: ConfigCmd,
     },
+    /// Print shell completion script for the requested shell.
+    Completions(CompletionsArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct CompletionsArgs {
+    /// Target shell (bash, zsh, fish, elvish, powershell).
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }
 
 #[derive(Subcommand, Debug)]

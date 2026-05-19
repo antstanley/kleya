@@ -1,7 +1,7 @@
 #![allow(missing_docs, clippy::unwrap_used)]
 
 use clap::Parser as _;
-use kleya_cli::clap_args::Cli;
+use kleya_cli::clap_args::{Cli, Cmd};
 use kleya_core::test_support::{InMemoryCompute, InMemoryKeyStore};
 use std::sync::Arc;
 
@@ -23,4 +23,15 @@ async fn list_subcommand_runs_against_fake_with_no_instances() {
     )
     .await
     .expect("ok");
+}
+
+#[test]
+fn completions_subcommand_parses() {
+    let cli = Cli::try_parse_from(["kleya", "completions", "zsh"]).expect("parses");
+    match cli.command {
+        Cmd::Completions(args) => {
+            assert_eq!(args.shell, clap_complete::Shell::Zsh);
+        }
+        other => panic!("expected Completions variant, got {other:?}"),
+    }
 }
