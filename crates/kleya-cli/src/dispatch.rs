@@ -12,7 +12,7 @@ use kleya_core::commands::{
 use kleya_core::ports::cloud_compute::CloudCompute;
 use kleya_core::ports::id_gen::AdjAnimalIdGen;
 use kleya_core::ports::key_store::KeyStore;
-use kleya_core::ParsedConfig;
+use kleya_core::{JsonList, ParsedConfig};
 
 use clap::CommandFactory as _;
 
@@ -94,7 +94,7 @@ pub async fn run_with(
                 };
                 let list = svc.list().await?;
                 if args.json {
-                    let json = serde_json::to_string_pretty(&list)
+                    let json = serde_json::to_string_pretty(&JsonList::new(&list))
                         .map_err(|e| kleya_core::Error::Io(std::io::Error::other(e)))?;
                     println!("{json}");
                 } else {
@@ -196,7 +196,7 @@ pub async fn run_with(
         Cmd::List(args) => {
             let list = ListService { compute }.list_managed().await?;
             if args.json {
-                let json = serde_json::to_string_pretty(&list)
+                let json = serde_json::to_string_pretty(&JsonList::new(&list))
                     .map_err(|e| kleya_core::Error::Io(std::io::Error::other(e)))?;
                 println!("{json}");
             } else {

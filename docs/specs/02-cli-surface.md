@@ -175,5 +175,5 @@ Both poll loops use `kleya_core::util::wait_or_cancel` to observe cancellation w
 
 **Open questions**
 
-- *`--json` on `template list` and `list`.* Resolved: prioritise agent-friendly output. List commands ship a stable envelope (e.g. `{ "version": "1", "items": [...] }`) rather than raw `Vec<_>`, since kleya ships skills that consume this. Implementation is deferred to a follow-up task.
+- *`--json` on `template list` and `list`.* Resolved: prioritise agent-friendly output. List commands ship a stable envelope (e.g. `{ "version": "1", "items": [...] }`) rather than raw `Vec<_>`, since kleya ships skills that consume this. Implementation is deferred to a follow-up task. Shape implemented in this commit; consumers should parse `.version` first and branch on it (current version is `"1"`).
 - *Auto-completion.* Resolved: add `clap_complete` generation now rather than deferring to v0.2.

@@ -13,6 +13,7 @@ pub mod bootstrap;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod json_envelope;
 pub mod limits;
 pub mod model;
 pub mod parsed_config;
@@ -23,4 +24,5 @@ pub mod util;
 
 pub use config::Config;
 pub use error::{Error, Result};
+pub use json_envelope::JsonList;
 pub use parsed_config::{ParsedConfig, ParsedTemplate};

@@ -29,6 +29,7 @@ path = "../kleya-bootstrap-assets"
 
 [dev-dependencies]
 insta = { workspace = true, features = ["yaml"] }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
