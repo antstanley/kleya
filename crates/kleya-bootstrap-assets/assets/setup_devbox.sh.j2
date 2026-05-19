@@ -43,6 +43,8 @@ sudo dnf install -y ncurses
 cat > /tmp/ghostty.terminfo <<'GHOSTTY_TERMINFO_EOF'
 {{ ghostty_terminfo_source }}
 GHOSTTY_TERMINFO_EOF
+# Strict: tic failure aborts bootstrap (set -e above). Missing xterm-ghostty
+# terminfo must never reach a "successful" instance silently.
 sudo tic -x /tmp/ghostty.terminfo
 rm /tmp/ghostty.terminfo
 {%- endif %}

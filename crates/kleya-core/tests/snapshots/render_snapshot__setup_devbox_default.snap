@@ -315,5 +315,7 @@ xterm-ghostty|ghostty|Ghostty,
 	sc=\E7,
 
 GHOSTTY_TERMINFO_EOF
+# Strict: tic failure aborts bootstrap (set -e above). Missing xterm-ghostty
+# terminfo must never reach a "successful" instance silently.
 sudo tic -x /tmp/ghostty.terminfo
 rm /tmp/ghostty.terminfo
