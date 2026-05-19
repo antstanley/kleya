@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kleya.dev/schemas/canonical-types.schema.json",
+  "title": "kleya canonical types",
+  "description": "Authoritative shapes for kleya's domain entities, configuration structs, and error variants. Mirrors the Rust types in `kleya-core::model`, `kleya-core::config`, and `kleya-core::error`. See docs/specs/01-domain-model.md, 03-configuration.md, and 07-error-model.md for prose.",
+
+  "$defs": {
+    "InstanceName": {
+      "type": "string",
+      "description": "Human-readable name for an instance. Used as the `Name` tag.",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "maxLength": 63
+    },
+    "InstanceId": {
+      "type": "string",
+      "description": "AWS EC2 instance id.",
+      "pattern": "^i-[0-9a-f]{8,32}$"
+    },
+    "InstanceState": {
+      "description": "Lifecycle state mapped from the EC2 instance state name. `Other` carries any unrecognised raw value.",
+      "oneOf": [
+        { "type": "string", "enum": ["Pending", "Running", "ShuttingDown", "Terminated", "Stopping", "Stopped"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Other"],
+          "properties": { "Other": { "type": "string" } }
+        }
+      ]
+    },
+    "Instance": {
+      "type": "object",
+      "description": "A managed EC2 instance.",
+      "additionalProperties": false,
+      "required": ["id", "name", "state", "public_dns", "public_ip", "tags"],
+      "properties": {
+        "id":         { "$ref": "#/$defs/InstanceId" },
+        "name":       { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/InstanceName" } ] },
+        "state":      { "$ref": "#/$defs/InstanceState" },
+        "public_dns": { "type": ["string", "null"] },
+        "public_ip":  { "type": ["string", "null"] },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Tag" }
+        }
+      }
+    },
+    "InstanceFilter": {
+      "type": "object",
+      "description": "Optional filter for `instance_list`. Tag-matching is on key AND value (`tag:kleya:managed=true`).",
+      "additionalProperties": false,
+      "properties": {
+        "name":          { "type": ["string", "null"] },
+        "managed_only":  { "type": "boolean", "default": false },
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InstanceState" },
+          "default": []
+        }
+      }
+    },
+
+    "KeyName": {
+      "type": "string",
+      "description": "Validated key-pair name. Leading char excludes '.' to prevent hidden-file / path-traversal segments.",
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "PublicKey": {
+      "type": "string",
+      "description": "OpenSSH wire-format public key text (`ssh-ed25519 AAAA... [comment]`)."
+    },
+    "KeyPair": {
+      "type": "object",
+      "description": "A freshly-generated key pair, returned only by `KeyStore::generate`.",
+      "additionalProperties": false,
+      "required": ["name", "public", "private"],
+      "properties": {
+        "name":    { "$ref": "#/$defs/KeyName" },
+        "public":  { "$ref": "#/$defs/PublicKey" },
+        "private": { "type": "string", "description": "OpenSSH-PEM body just written at mode 0600." }
+      }
+    },
+    "Fingerprint": {
+      "type": "string",
+      "description": "EC2-style MD5 of the DER-encoded SPKI of the public key, colon-separated lowercase hex (47 chars).",
+      "pattern": "^[0-9a-f]{2}(:[0-9a-f]{2}){15}$",
+      "maxLength": 47,
+      "minLength": 47
+    },
+
+    "Region": {
+      "type": "string",
+      "description": "AWS commercial region name. Refuses cn-* and us-gov-* by design.",
+      "pattern": "^[a-z]{2}-[a-z]+-[0-9]+$"
+    },
+    "AmiId":           { "type": "string", "description": "AWS AMI identifier (e.g. ami-0123456789abcdef0)." },
+    "SubnetId":        { "type": "string", "description": "AWS subnet identifier." },
+    "SecurityGroupId": { "type": "string", "description": "AWS security-group identifier." },
+
+    "Tag": {
+      "type": "object",
+      "description": "Key/value tag. Length caps from TAG_KEY_BYTES_MAX (128) and TAG_VALUE_BYTES_MAX (256).",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key":   { "type": "string", "minLength": 1, "maxLength": 128 },
+        "value": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "ManagementTagKey": {
+      "type": "string",
+      "description": "One of the four canonical kleya-management tag keys.",
+      "enum": ["Name", "kleya:managed", "kleya:template", "kleya:key"]
+    },
+
+    "TemplateName":    { "type": "string", "description": "Human handle for a launch template." },
+    "TemplateId":      { "type": "string", "description": "AWS launch-template identifier." },
+    "TemplateVersion": { "type": "integer", "minimum": 0, "description": "Monotonic launch-template version." },
+    "TemplateSpec": {
+      "type": "object",
+      "description": "Inputs to ensure_default_template / template_create / template_update.",
+      "additionalProperties": false,
+      "required": ["name", "ami_id", "ami_alias", "instance_type", "key_name", "security_group_ids", "subnet_id", "market", "spot_type", "tags", "user_data_base64"],
+      "properties": {
+        "name":          { "$ref": "#/$defs/TemplateName" },
+        "ami_id":        { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/AmiId" } ] },
+        "ami_alias":     { "type": ["string", "null"] },
+        "instance_type": { "type": "string" },
+        "key_name":      { "$ref": "#/$defs/KeyName" },
+        "security_group_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SecurityGroupId" },
+          "description": "Empty array means 'let AWS apply the VPC default SG'; the adapter omits the field rather than passing Some(vec![])."
+        },
+        "subnet_id":     { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/SubnetId" } ] },
+        "market":        { "$ref": "#/$defs/MarketKind" },
+        "spot_type":     { "$ref": "#/$defs/SpotType" },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Tag" }
+        },
+        "user_data_base64": {
+          "type": "string",
+          "description": "Output of bootstrap::encode_user_data or encode_user_data_passthrough."
+        }
+      }
+    },
+    "TemplateSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "latest_version"],
+      "properties": {
+        "id":             { "$ref": "#/$defs/TemplateId" },
+        "name":           { "$ref": "#/$defs/TemplateName" },
+        "latest_version": { "$ref": "#/$defs/TemplateVersion" }
+      }
+    },
+
+    "MarketKind": {
+      "type": "string",
+      "enum": ["spot", "on-demand"]
+    },
+    "SpotType": {
+      "type": "string",
+      "enum": ["one-time", "persistent"]
+    },
+
+    "LaunchRequest": {
+      "type": "object",
+      "description": "Runtime invocation shape for instance_launch.",
+      "additionalProperties": false,
+      "required": ["template", "instance_name", "instance_type_override", "market_override", "spot_type_override", "extra_tags", "key_name"],
+      "properties": {
+        "template":               { "$ref": "#/$defs/TemplateName" },
+        "instance_name":          { "$ref": "#/$defs/InstanceName" },
+        "instance_type_override": { "type": ["string", "null"] },
+        "market_override":        { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/MarketKind" } ] },
+        "spot_type_override":     { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/SpotType" } ] },
+        "extra_tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Tag" }
+        },
+        "key_name": { "$ref": "#/$defs/KeyName" }
+      }
+    },
+
+    "Deadline": {
+      "type": "object",
+      "description": "Wall-clock + poll-interval bound for instance_wait_running. The Rust struct also carries an optional CancellationToken which is not serialisable.",
+      "additionalProperties": false,
+      "required": ["timeout_seconds", "poll_interval_seconds"],
+      "properties": {
+        "timeout_seconds":       { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "poll_interval_seconds": { "type": "integer", "minimum": 1, "maximum": 60 }
+      }
+    },
+
+    "Config": {
+      "type": "object",
+      "description": "Top-level loaded configuration. Source format may be TOML, YAML, JSON, or JSONC; this is the deserialised shape.",
+      "additionalProperties": false,
+      "required": ["default_region", "default_profile", "defaults", "bootstrap", "ssh", "keys", "templates"],
+      "properties": {
+        "default_region":  { "$ref": "#/$defs/Region" },
+        "default_profile": { "type": "string" },
+        "defaults":        { "$ref": "#/$defs/Defaults" },
+        "bootstrap":       { "$ref": "#/$defs/BootstrapCfg" },
+        "ssh":             { "$ref": "#/$defs/SshCfg" },
+        "keys":            { "$ref": "#/$defs/KeysCfg" },
+        "templates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TemplateCfg" },
+          "maxItems": 64
+        }
+      }
+    },
+    "Defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_type", "market", "spot_type", "ami_alias"],
+      "properties": {
+        "instance_type": { "type": "string" },
+        "market":        { "type": "string", "enum": ["spot", "on-demand"] },
+        "spot_type":     { "type": "string", "enum": ["one-time", "persistent"] },
+        "ami_alias":     { "type": "string", "enum": ["amazon-linux-2023-arm64", "amazon-linux-2023-x86_64"] }
+      }
+    },
+    "BootstrapCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install_ghostty_terminfo"],
+      "properties": {
+        "user_data_path":           { "type": ["string", "null"] },
+        "install_ghostty_terminfo": { "type": "boolean" }
+      }
+    },
+    "SshCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "tmux", "tmux_session", "extra_args"],
+      "properties": {
+        "user":         { "type": "string" },
+        "tmux":         { "type": "boolean" },
+        "tmux_session": { "type": "string", "pattern": "^[a-z0-9_-]{1,63}$" },
+        "extra_args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "KeysCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "default_key_name"],
+      "properties": {
+        "dir":              { "type": "string" },
+        "default_key_name": { "$ref": "#/$defs/KeyName" }
+      }
+    },
+    "TemplateCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tags"],
+      "properties": {
+        "name":               { "type": "string" },
+        "ami_id":             { "type": ["string", "null"] },
+        "instance_type":      { "type": ["string", "null"] },
+        "key_name":           { "anyOf": [ { "type": "null" }, { "$ref": "#/$defs/KeyName" } ] },
+        "security_group_ids": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/SecurityGroupId" } }
+          ]
+        },
+        "subnet_id":          { "type": ["string", "null"] },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TagCfg" },
+          "maxItems": 50
+        }
+      }
+    },
+    "TagCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key":   { "type": "string", "minLength": 1, "maxLength": 128 },
+        "value": { "type": "string", "maxLength": 256 }
+      }
+    },
+
+    "Error": {
+      "description": "Discriminated union mirror of `kleya_core::error::Error`. The Rust enum uses thiserror; this shape is what an external consumer of structured kleya error logs sees.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "reason"],
+          "properties": { "kind": { "const": "ConfigInvalid" }, "reason": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "bytes", "max"],
+          "properties": { "kind": { "const": "UserDataTooLarge" }, "bytes": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name", "region"],
+          "properties": { "kind": { "const": "InstanceNotFound" }, "name": { "type": "string" }, "region": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name", "candidates"],
+          "properties": { "kind": { "const": "AmbiguousHandle" }, "name": { "type": "string" }, "candidates": { "type": "array", "items": { "$ref": "#/$defs/InstanceId" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "instance", "elapsed_seconds"],
+          "properties": { "kind": { "const": "SshNotReady" }, "instance": { "$ref": "#/$defs/InstanceId" }, "elapsed_seconds": { "type": "integer", "minimum": 0 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "instance", "elapsed_seconds"],
+          "properties": { "kind": { "const": "LaunchWaitTimeout" }, "instance": { "$ref": "#/$defs/InstanceId" }, "elapsed_seconds": { "type": "integer", "minimum": 0 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "instance"],
+          "properties": { "kind": { "const": "Cancelled" }, "instance": { "$ref": "#/$defs/InstanceId" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name"],
+          "properties": { "kind": { "const": "KeyMismatch" }, "name": { "$ref": "#/$defs/KeyName" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name"],
+          "properties": { "kind": { "const": "KeyOrphaned" }, "name": { "$ref": "#/$defs/KeyName" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "provider", "source"],
+          "properties": { "kind": { "const": "Adapter" }, "provider": { "type": "string", "enum": ["aws-ec2"] }, "source": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "message"],
+          "properties": { "kind": { "const": "Io" }, "message": { "type": "string" } } }
+      ]
+    },
+
+    "ExitCode": {
+      "type": "integer",
+      "description": "kleya process exit code; one per Error variant (KeyMismatch/KeyOrphaned share 7).",
+      "enum": [0, 1, 2, 3, 4, 5, 6, 7, 70, 74, 130]
+    }
+  }
+}
