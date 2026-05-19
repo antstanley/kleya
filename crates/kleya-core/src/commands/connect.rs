@@ -212,6 +212,7 @@ mod tests {
             instance_type: None,
             market: None,
             dry_run: false,
+            regenerate_key: false,
             cancel: None,
         })
         .await

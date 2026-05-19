@@ -42,6 +42,9 @@ pub struct LaunchOpts {
     pub instance_type: Option<String>,
     pub market: Option<MarketKind>,
     pub dry_run: bool,
+    /// On (local-absent, EC2-present): delete the EC2 key, regenerate locally,
+    /// re-register. Without this flag the case is fatal `Error::KeyOrphaned`.
+    pub regenerate_key: bool,
     pub cancel: Option<tokio_util::sync::CancellationToken>,
 }
 
@@ -50,6 +53,7 @@ pub struct LaunchPlan {
     pub instance_name: InstanceName,
     pub key_name: KeyName,
     pub ami_id: AmiId,
+    pub regenerate_key: bool,
 }
 
 impl LaunchService {
@@ -110,11 +114,13 @@ impl LaunchService {
             instance_name,
             key_name,
             ami_id,
+            regenerate_key: opts.regenerate_key,
         })
     }
 
     async fn ensure_template(&self, plan: &LaunchPlan) -> Result<()> {
-        self.ensure_keypair(&plan.key_name).await?;
+        self.ensure_keypair(&plan.key_name, plan.regenerate_key)
+            .await?;
         if self
             .compute
             .template_get_by_name(&plan.template)
@@ -182,7 +188,7 @@ impl LaunchService {
         encode_user_data(&rendered)
     }
 
-    async fn ensure_keypair(&self, name: &KeyName) -> Result<()> {
+    async fn ensure_keypair(&self, name: &KeyName, regenerate: bool) -> Result<()> {
         match (
             self.key_store.exists(name),
             self.compute.keypair_fingerprint(name).await?,
@@ -197,6 +203,13 @@ impl LaunchService {
             (true, None) => {
                 let public = self.key_store.read_public(name)?;
                 self.compute.ensure_default_keypair(name, &public).await
+            }
+            (false, Some(_)) if regenerate => {
+                self.compute.keypair_delete(name).await?;
+                let pair = self.key_store.generate(name)?;
+                self.compute
+                    .ensure_default_keypair(name, &pair.public)
+                    .await
             }
             (false, Some(_)) => Err(Error::KeyOrphaned { name: name.clone() }),
             (false, None) => {

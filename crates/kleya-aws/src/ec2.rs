@@ -471,6 +471,32 @@ impl CloudCompute for AwsEc2 {
             .map(|s| Fingerprint(s.to_string())))
     }
 
+    async fn keypair_delete(&self, name: &KeyName) -> Result<()> {
+        let res = self
+            .ec2
+            .delete_key_pair()
+            .key_name(name.as_str())
+            .send()
+            .await;
+        if let Err(err) = res {
+            if !has_code(&err, "InvalidKeyPair.NotFound") {
+                return Err(sdk(err).into());
+            }
+        }
+        if let Ok(after) = self
+            .ec2
+            .describe_key_pairs()
+            .key_names(name.as_str())
+            .send()
+            .await
+        {
+            if !after.key_pairs().is_empty() {
+                return Err(AwsError::MissingField("keypair still present after delete").into());
+            }
+        }
+        Ok(())
+    }
+
     async fn resolve_default_subnet(&self) -> Result<SubnetId> {
         let vpcs = self
             .ec2

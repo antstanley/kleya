@@ -110,6 +110,11 @@ pub struct LaunchArgs {
     pub no_wait_bootstrap: bool,
     #[arg(long)]
     pub dry_run: bool,
+    /// On (local-absent, EC2-present): delete the EC2 key, regenerate
+    /// locally, and re-register. Without this flag the case is fatal
+    /// `Error::KeyOrphaned`.
+    #[arg(long)]
+    pub regenerate_key: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]

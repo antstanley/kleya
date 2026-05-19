@@ -77,6 +77,7 @@ async fn launch_zero_config_creates_default_template_and_instance() {
             instance_type: None,
             market: None,
             dry_run: false,
+            regenerate_key: false,
             cancel: None,
         })
         .await
@@ -104,6 +105,7 @@ async fn launch_dry_run_returns_none_and_does_not_create_template() {
             instance_type: None,
             market: None,
             dry_run: true,
+            regenerate_key: false,
             cancel: None,
         })
         .await
@@ -129,6 +131,7 @@ async fn terminate_by_name_succeeds_when_unique() {
             instance_type: None,
             market: None,
             dry_run: false,
+            regenerate_key: false,
             cancel: None,
         })
         .await
@@ -169,6 +172,7 @@ async fn list_returns_only_managed() {
         instance_type: None,
         market: None,
         dry_run: false,
+        regenerate_key: false,
         cancel: None,
     })
     .await
@@ -179,10 +183,102 @@ async fn list_returns_only_managed() {
         instance_type: None,
         market: None,
         dry_run: false,
+        regenerate_key: false,
         cancel: None,
     })
     .await
     .unwrap();
     let list = ListService { compute }.list_managed().await.expect("list");
     assert_eq!(list.len(), 2);
+}
+
+#[tokio::test]
+async fn launch_regenerates_orphaned_key_when_flag_set() {
+    use kleya_core::model::key::PublicKey;
+    use kleya_core::ports::cloud_compute::CloudCompute;
+
+    let compute = Arc::new(InMemoryCompute::new());
+    let key_store = Arc::new(InMemoryKeyStore::new());
+    let name = KeyName::new("kleya-default").unwrap();
+    compute
+        .ensure_default_keypair(&name, &PublicKey("ssh-ed25519 AAAA seed".into()))
+        .await
+        .unwrap();
+    assert!(!kleya_core::ports::key_store::KeyStore::exists(
+        key_store.as_ref(),
+        &name
+    ));
+    let before = compute
+        .keypair_fingerprint(&name)
+        .await
+        .unwrap()
+        .expect("seeded fingerprint");
+
+    let svc = LaunchService {
+        compute: compute.clone(),
+        key_store: key_store.clone(),
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+    };
+    let out = svc
+        .run(LaunchOpts {
+            template_name: None,
+            instance_name: Some("solo".into()),
+            instance_type: None,
+            market: None,
+            dry_run: false,
+            regenerate_key: true,
+            cancel: None,
+        })
+        .await
+        .expect("launch should succeed");
+    assert!(out.is_some(), "instance returned");
+
+    assert!(kleya_core::ports::key_store::KeyStore::exists(
+        key_store.as_ref(),
+        &name
+    ));
+    let after = compute
+        .keypair_fingerprint(&name)
+        .await
+        .unwrap()
+        .expect("post-regenerate fingerprint");
+    assert_ne!(before, after, "fingerprint must change after regenerate");
+}
+
+#[tokio::test]
+async fn launch_errors_on_orphaned_key_when_flag_unset() {
+    use kleya_core::model::key::PublicKey;
+    use kleya_core::ports::cloud_compute::CloudCompute;
+
+    let compute = Arc::new(InMemoryCompute::new());
+    let key_store = Arc::new(InMemoryKeyStore::new());
+    let name = KeyName::new("kleya-default").unwrap();
+    compute
+        .ensure_default_keypair(&name, &PublicKey("ssh-ed25519 AAAA seed".into()))
+        .await
+        .unwrap();
+
+    let svc = LaunchService {
+        compute,
+        key_store,
+        id_gen: Arc::new(FakeIdGen::new()),
+        config: Arc::new(Config::default()),
+    };
+    let err = svc
+        .run(LaunchOpts {
+            template_name: None,
+            instance_name: None,
+            instance_type: None,
+            market: None,
+            dry_run: false,
+            regenerate_key: false,
+            cancel: None,
+        })
+        .await
+        .expect_err("must fail");
+    assert!(
+        matches!(err, kleya_core::Error::KeyOrphaned { .. }),
+        "got: {err:?}"
+    );
 }

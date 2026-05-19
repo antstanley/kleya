@@ -240,6 +240,11 @@ impl CloudCompute for InMemoryCompute {
             .map(Fingerprint))
     }
 
+    async fn keypair_delete(&self, name: &KeyName) -> Result<()> {
+        self.state.lock().expect("mutex").keypairs.remove(name);
+        Ok(())
+    }
+
     async fn resolve_default_subnet(&self) -> Result<SubnetId> {
         Ok(self.default_subnet.clone())
     }

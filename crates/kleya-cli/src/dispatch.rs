@@ -136,6 +136,7 @@ pub async fn run_with(
                     instance_type: args.instance_type,
                     market,
                     dry_run: args.dry_run,
+                    regenerate_key: args.regenerate_key,
                     cancel: Some(cancel.clone()),
                 })
                 .await?;
@@ -390,6 +391,7 @@ mod tests {
             wait_bootstrap: wait,
             no_wait_bootstrap: no_wait,
             dry_run: false,
+            regenerate_key: false,
         }
     }
 
