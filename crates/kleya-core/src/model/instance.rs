@@ -1,14 +1,14 @@
-#![allow(clippy::expect_used, clippy::disallowed_methods)]
-
 use crate::error::{Error, Result};
 use crate::limits::INSTANCE_NAME_BYTES_MAX;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::expect_used, clippy::disallowed_methods)]
 static INSTANCE_NAME_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}$").expect("static regex compiles"));
 
+#[allow(clippy::expect_used, clippy::disallowed_methods)]
 static INSTANCE_ID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^i-[0-9a-f]{8,32}$").expect("static regex compiles"));
 

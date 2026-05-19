@@ -42,17 +42,18 @@ async fn instance_launch_then_list_then_terminate() {
     use kleya_core::ports::cloud_compute::CloudCompute;
 
     let key = model::key::KeyName::new("floci-instance-test").unwrap();
-    let public = model::key::PublicKey(
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyFLOCITestKeyMaterial".into(),
-    );
+    let public = model::key::PublicKey::new(
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyFLOCITestKeyMaterial",
+    )
+    .unwrap();
     if let Err(e) = adapter.ensure_default_keypair(&key, &public).await {
         floci_skip(&format!("ensure_default_keypair failed: {e}"));
         return;
     }
 
     let spec = model::template::TemplateSpec {
-        name: model::template::TemplateName("floci-instance-template".into()),
-        ami_id: Some(model::region::AmiId("ami-00000000000000001".into())),
+        name: model::template::TemplateName::new("floci-instance-template").unwrap(),
+        ami_id: Some(model::region::AmiId::new("ami-00000000000000001").unwrap()),
         ami_alias: None,
         instance_type: "t3.micro".into(),
         key_name: key.clone(),

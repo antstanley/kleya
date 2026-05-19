@@ -5,27 +5,18 @@ use crate::bootstrap::{
     encode::{encode_user_data, encode_user_data_passthrough},
     render::{render, BootstrapVars},
 };
-
-fn shellexpand_tilde(p: &str) -> std::path::PathBuf {
-    if let Some(rest) = p.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return std::path::PathBuf::from(home).join(rest);
-        }
-    }
-    std::path::PathBuf::from(p)
-}
-use crate::config::Config;
 use crate::error::Error;
 use crate::limits::{LAUNCH_POLL_INTERVAL_SECONDS, LAUNCH_WAIT_SECONDS_MAX};
 use crate::model::{
     instance::{Instance, InstanceName},
     key::KeyName,
     launch::{Deadline, LaunchRequest},
-    market::{MarketKind, SpotType},
+    market::MarketKind,
     region::AmiId,
     tag::Tag,
     template::{TemplateName, TemplateSpec},
 };
+use crate::parsed_config::ParsedConfig;
 use crate::ports::{cloud_compute::CloudCompute, id_gen::IdGen, key_store::KeyStore};
 use crate::Result;
 
@@ -33,7 +24,7 @@ pub struct LaunchService {
     pub compute: Arc<dyn CloudCompute>,
     pub key_store: Arc<dyn KeyStore>,
     pub id_gen: Arc<dyn IdGen>,
-    pub config: Arc<Config>,
+    pub config: Arc<ParsedConfig>,
 }
 
 pub struct LaunchOpts {
@@ -61,10 +52,10 @@ impl LaunchService {
         let plan = self.build_plan(&opts).await?;
         if opts.dry_run {
             tracing::info!(
-                template = %plan.template.0,
+                template = %plan.template,
                 instance = %plan.instance_name.as_str(),
-                key = %plan.key_name.as_str(),
-                ami = %plan.ami_id.0,
+                key = %plan.key_name,
+                ami = %plan.ami_id,
                 "dry-run plan"
             );
             return Ok(None);
@@ -95,19 +86,19 @@ impl LaunchService {
     }
 
     async fn build_plan(&self, opts: &LaunchOpts) -> Result<LaunchPlan> {
-        let template_name = TemplateName(
+        let template_name = TemplateName::new(
             opts.template_name
                 .clone()
                 .unwrap_or_else(|| "default".into()),
-        );
+        )?;
         let instance_name = match &opts.instance_name {
             Some(n) => InstanceName::new(n)?,
             None => InstanceName::new(self.id_gen.name())?,
         };
-        let key_name = KeyName::new(self.config.keys.default_key_name.clone())?;
+        let key_name = self.config.default_key_name.clone();
         let ami_id = self
             .compute
-            .resolve_ami_alias(&self.config.defaults.ami_alias)
+            .resolve_ami_alias(&self.config.default_ami_alias)
             .await?;
         Ok(LaunchPlan {
             template: template_name,
@@ -136,32 +127,19 @@ impl LaunchService {
             .await?;
         let user_data_b64 = self.render_user_data().await?;
         let mut tags = vec![Tag::new("Project", "kleya")?];
-        if let Some(t) = self
-            .config
-            .templates
-            .iter()
-            .find(|t| t.name == plan.template.0)
-        {
-            for tag in &t.tags {
-                tags.push(Tag::new(&tag.key, &tag.value)?);
-            }
+        if let Some(t) = self.config.template(&plan.template) {
+            tags.extend(t.tags.iter().cloned());
         }
         let spec = TemplateSpec {
             name: plan.template.clone(),
             ami_id: Some(plan.ami_id.clone()),
             ami_alias: None,
-            instance_type: self.config.defaults.instance_type.clone(),
+            instance_type: self.config.default_instance_type.clone(),
             key_name: plan.key_name.clone(),
             security_group_ids: vec![sg],
             subnet_id: Some(subnet),
-            market: match self.config.defaults.market.as_str() {
-                "on-demand" => MarketKind::OnDemand,
-                _ => MarketKind::Spot,
-            },
-            spot_type: match self.config.defaults.spot_type.as_str() {
-                "persistent" => SpotType::Persistent,
-                _ => SpotType::OneTime,
-            },
+            market: self.config.default_market,
+            spot_type: self.config.default_spot_type,
             tags,
             user_data_base64: user_data_b64,
         };
@@ -176,10 +154,9 @@ impl LaunchService {
                     "bootstrap.user_data_path is set; install_ghostty_terminfo has no effect"
                 );
             }
-            let expanded = shellexpand_tilde(path);
-            let bytes = tokio::fs::read(&expanded).await?;
-            let raw = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
-                reason: format!("user-data override not utf-8: {e}"),
+            let bytes = tokio::fs::read(path).await?;
+            let raw = String::from_utf8(bytes).map_err(|e| Error::UserDataNotUtf8 {
+                reason: e.to_string(),
             })?;
             return encode_user_data_passthrough(&raw);
         }
@@ -189,35 +166,70 @@ impl LaunchService {
     }
 
     async fn ensure_keypair(&self, name: &KeyName, regenerate: bool) -> Result<()> {
-        match (
-            self.key_store.exists(name),
-            self.compute.keypair_fingerprint(name).await?,
-        ) {
-            (true, Some(cloud_fp)) => {
-                let local_fp = self.key_store.fingerprint(name)?;
-                if local_fp != cloud_fp {
-                    return Err(Error::KeyMismatch { name: name.clone() });
+        match KeyState::observe(self.key_store.as_ref(), self.compute.as_ref(), name).await? {
+            KeyState::Synced { local, cloud } => {
+                if local == cloud {
+                    Ok(())
+                } else {
+                    Err(Error::KeyMismatch { name: name.clone() })
                 }
-                Ok(())
             }
-            (true, None) => {
+            KeyState::LocalOnly => {
                 let public = self.key_store.read_public(name)?;
                 self.compute.ensure_default_keypair(name, &public).await
             }
-            (false, Some(_)) if regenerate => {
+            KeyState::CloudOnly if regenerate => {
                 self.compute.keypair_delete(name).await?;
                 let pair = self.key_store.generate(name)?;
                 self.compute
                     .ensure_default_keypair(name, &pair.public)
                     .await
             }
-            (false, Some(_)) => Err(Error::KeyOrphaned { name: name.clone() }),
-            (false, None) => {
+            KeyState::CloudOnly => Err(Error::KeyOrphaned { name: name.clone() }),
+            KeyState::Absent => {
                 let pair = self.key_store.generate(name)?;
                 self.compute
                     .ensure_default_keypair(name, &pair.public)
                     .await
             }
         }
+    }
+}
+
+/// The four observable states of a kleya keypair across the local store and
+/// the cloud provider. Modeling these as named variants makes the launch
+/// state machine readable at a glance (vs. matching on `(bool, Option<_>)`).
+#[derive(Debug)]
+enum KeyState {
+    /// Local file present, cloud key present — must compare fingerprints.
+    Synced {
+        local: crate::model::key::Fingerprint,
+        cloud: crate::model::key::Fingerprint,
+    },
+    /// Local file present, cloud absent — register the public key.
+    LocalOnly,
+    /// Local file absent, cloud present — orphaned (or regenerate).
+    CloudOnly,
+    /// Neither present — generate a fresh keypair.
+    Absent,
+}
+
+impl KeyState {
+    async fn observe(
+        key_store: &dyn KeyStore,
+        compute: &dyn CloudCompute,
+        name: &KeyName,
+    ) -> Result<Self> {
+        let local_present = key_store.exists(name);
+        let cloud_fp = compute.keypair_fingerprint(name).await?;
+        Ok(match (local_present, cloud_fp) {
+            (true, Some(cloud)) => {
+                let local = key_store.fingerprint(name)?;
+                Self::Synced { local, cloud }
+            }
+            (true, None) => Self::LocalOnly,
+            (false, Some(_)) => Self::CloudOnly,
+            (false, None) => Self::Absent,
+        })
     }
 }

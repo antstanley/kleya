@@ -17,8 +17,8 @@ use kleya_core::test_support::{FakeIdGen, InMemoryCompute, InMemoryKeyStore};
 
 fn sample_spec(name: &str) -> TemplateSpec {
     TemplateSpec {
-        name: TemplateName(name.into()),
-        ami_id: Some(AmiId("ami-1".into())),
+        name: TemplateName::new(name).unwrap(),
+        ami_id: Some(AmiId::new("ami-deadbeef").unwrap()),
         ami_alias: None,
         instance_type: "m8g.xlarge".into(),
         key_name: KeyName::new("kleya-default").unwrap(),
@@ -35,14 +35,14 @@ fn sample_spec(name: &str) -> TemplateSpec {
 async fn create_then_list_then_delete() {
     let svc = TemplateService {
         compute: Arc::new(InMemoryCompute::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     svc.create(sample_spec("devbox")).await.expect("create");
     svc.create(sample_spec("workbox")).await.expect("create");
     let listed = svc.list().await.expect("list");
     assert_eq!(listed.len(), 2);
 
-    svc.delete_by_name(&TemplateName("devbox".into()))
+    svc.delete_by_name(&TemplateName::new("devbox").unwrap())
         .await
         .expect("delete");
     let listed = svc.list().await.expect("list");
@@ -53,13 +53,13 @@ async fn create_then_list_then_delete() {
 async fn delete_unknown_returns_error() {
     let svc = TemplateService {
         compute: Arc::new(InMemoryCompute::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let err = svc
-        .delete_by_name(&TemplateName("ghost".into()))
+        .delete_by_name(&TemplateName::new("ghost").unwrap())
         .await
         .unwrap_err();
-    assert!(matches!(err, kleya_core::Error::ConfigInvalid { .. }));
+    assert!(matches!(err, kleya_core::Error::TemplateNotFound { .. }));
 }
 
 #[tokio::test]
@@ -68,7 +68,7 @@ async fn launch_zero_config_creates_default_template_and_instance() {
         compute: Arc::new(InMemoryCompute::new()),
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let res = svc
         .run(LaunchOpts {
@@ -96,7 +96,7 @@ async fn launch_dry_run_returns_none_and_does_not_create_template() {
         compute: compute.clone(),
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let res = svc
         .run(LaunchOpts {
@@ -122,7 +122,7 @@ async fn terminate_by_name_succeeds_when_unique() {
         compute: compute.clone(),
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let inst = svc
         .run(LaunchOpts {
@@ -164,7 +164,7 @@ async fn list_returns_only_managed() {
         compute: compute.clone(),
         key_store: Arc::new(InMemoryKeyStore::new()),
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     svc.run(LaunchOpts {
         template_name: None,
@@ -201,7 +201,7 @@ async fn launch_regenerates_orphaned_key_when_flag_set() {
     let key_store = Arc::new(InMemoryKeyStore::new());
     let name = KeyName::new("kleya-default").unwrap();
     compute
-        .ensure_default_keypair(&name, &PublicKey("ssh-ed25519 AAAA seed".into()))
+        .ensure_default_keypair(&name, &PublicKey::new("ssh-ed25519 AAAA seed").unwrap())
         .await
         .unwrap();
     assert!(!kleya_core::ports::key_store::KeyStore::exists(
@@ -218,7 +218,7 @@ async fn launch_regenerates_orphaned_key_when_flag_set() {
         compute: compute.clone(),
         key_store: key_store.clone(),
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let out = svc
         .run(LaunchOpts {
@@ -255,7 +255,7 @@ async fn launch_errors_on_orphaned_key_when_flag_unset() {
     let key_store = Arc::new(InMemoryKeyStore::new());
     let name = KeyName::new("kleya-default").unwrap();
     compute
-        .ensure_default_keypair(&name, &PublicKey("ssh-ed25519 AAAA seed".into()))
+        .ensure_default_keypair(&name, &PublicKey::new("ssh-ed25519 AAAA seed").unwrap())
         .await
         .unwrap();
 
@@ -263,7 +263,7 @@ async fn launch_errors_on_orphaned_key_when_flag_unset() {
         compute,
         key_store,
         id_gen: Arc::new(FakeIdGen::new()),
-        config: Arc::new(Config::default()),
+        config: Arc::new(Config::default().parse().unwrap()),
     };
     let err = svc
         .run(LaunchOpts {

@@ -14,7 +14,11 @@ use crate::limits::{
 /// header. The raw input has no hard cap from EC2 on this path, but we still refuse
 /// pathologically large inputs to bound the gzip allocation.
 pub fn encode_user_data(raw: &str) -> Result<String> {
-    assert!(!raw.is_empty(), "encode_user_data called with empty raw");
+    if raw.is_empty() {
+        return Err(Error::ConfigInvalid {
+            reason: "user-data is empty".into(),
+        });
+    }
     if raw.len() > USER_DATA_RAW_BYTES_MAX * 4 {
         return Err(Error::UserDataTooLarge {
             bytes: raw.len(),
@@ -35,7 +39,7 @@ pub fn encode_user_data(raw: &str) -> Result<String> {
         b64.len() <= USER_DATA_BASE64_BYTES_MAX,
         "base64 of gzipped data must respect the derived ceiling"
     );
-    assert!(!b64.is_empty(), "encoded output empty");
+    debug_assert!(!b64.is_empty());
     Ok(b64)
 }
 
@@ -44,10 +48,11 @@ pub fn encode_user_data(raw: &str) -> Result<String> {
 /// skip templating. The operative limit is `USER_DATA_RAW_BYTES_MAX` (16 KiB) since
 /// nothing is gzipped on the wire.
 pub fn encode_user_data_passthrough(raw: &str) -> Result<String> {
-    assert!(
-        !raw.is_empty(),
-        "encode_user_data_passthrough called with empty raw"
-    );
+    if raw.is_empty() {
+        return Err(Error::ConfigInvalid {
+            reason: "user-data is empty".into(),
+        });
+    }
     if raw.len() > USER_DATA_RAW_BYTES_MAX {
         return Err(Error::UserDataTooLarge {
             bytes: raw.len(),
@@ -59,7 +64,7 @@ pub fn encode_user_data_passthrough(raw: &str) -> Result<String> {
         b64.len() <= USER_DATA_BASE64_BYTES_MAX,
         "base64 of raw data must respect the derived ceiling"
     );
-    assert!(!b64.is_empty(), "encoded output empty");
+    debug_assert!(!b64.is_empty());
     Ok(b64)
 }
 

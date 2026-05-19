@@ -19,7 +19,7 @@ struct State {
     templates: HashMap<TemplateName, (TemplateId, TemplateSpec, TemplateVersion)>,
     instances: HashMap<InstanceId, Instance>,
     sgs: HashMap<String, SecurityGroupId>,
-    keypairs: HashMap<KeyName, String>,
+    keypairs: HashMap<KeyName, Fingerprint>,
     next_id: u64,
 }
 
@@ -34,8 +34,8 @@ impl InMemoryCompute {
     pub fn new() -> Self {
         Self {
             state: Mutex::new(State::default()),
-            default_subnet: SubnetId("subnet-fake".into()),
-            default_ami: AmiId("ami-fake".into()),
+            default_subnet: SubnetId::new("subnet-deadbeef").expect("static subnet id"),
+            default_ami: AmiId::new("ami-deadbeef").expect("static ami id"),
         }
     }
 
@@ -56,7 +56,8 @@ impl Default for InMemoryCompute {
 impl CloudCompute for InMemoryCompute {
     async fn template_create(&self, spec: &TemplateSpec) -> Result<TemplateId> {
         let mut s = self.state.lock().expect("mutex");
-        let id = TemplateId(format!("lt-{}", s.templates.len()));
+        let id = TemplateId::new(format!("lt-{:08x}", s.templates.len()))
+            .expect("synthetic template id");
         s.templates.insert(
             spec.name.clone(),
             (id.clone(), spec.clone(), TemplateVersion(1)),
@@ -74,9 +75,7 @@ impl CloudCompute for InMemoryCompute {
             .templates
             .values_mut()
             .find(|(tid, _, _)| tid == id)
-            .ok_or_else(|| Error::ConfigInvalid {
-                reason: format!("template not found: {}", id.0),
-            })?;
+            .ok_or_else(|| Error::TemplateNotFoundById { id: id.clone() })?;
         entry.1 = spec.clone();
         entry.2 = TemplateVersion(entry.2 .0 + 1);
         Ok(entry.2.clone())
@@ -114,7 +113,7 @@ impl CloudCompute for InMemoryCompute {
         let tags = vec![
             Tag::new(KLEYA_TAG_NAME, req.instance_name.as_str())?,
             Tag::new(KLEYA_TAG_MANAGED, "true")?,
-            Tag::new(KLEYA_TAG_TEMPLATE, &req.template.0)?,
+            Tag::new(KLEYA_TAG_TEMPLATE, req.template.as_str())?,
             Tag::new(KLEYA_TAG_KEY, req.key_name.as_str())?,
         ];
         let inst = Instance {
@@ -143,7 +142,7 @@ impl CloudCompute for InMemoryCompute {
                     && !i
                         .tags
                         .iter()
-                        .any(|t| t.key == KLEYA_TAG_MANAGED && t.value == "true")
+                        .any(|t| t.key() == KLEYA_TAG_MANAGED && t.value() == "true")
                 {
                     return false;
                 }
@@ -216,7 +215,10 @@ impl CloudCompute for InMemoryCompute {
         let id = s
             .sgs
             .entry(name.to_string())
-            .or_insert(SecurityGroupId(format!("sg-{next}")))
+            .or_insert_with(|| {
+                SecurityGroupId::new(format!("sg-{next:016x}"))
+                    .expect("synthetic security group id")
+            })
             .clone();
         Ok(id)
     }
@@ -224,7 +226,12 @@ impl CloudCompute for InMemoryCompute {
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()> {
         let mut s = self.state.lock().expect("mutex");
         s.keypairs.entry(name.clone()).or_insert_with(|| {
-            format!("fake-md5:{:08x}", crc32fast::hash(public_key.0.as_bytes()))
+            // Deterministic synthetic fingerprint — not in canonical EC2 format,
+            // so use `from_trusted` to bypass strict validation.
+            Fingerprint::from_trusted(format!(
+                "fake-md5:{:08x}",
+                crc32fast::hash(public_key.as_bytes())
+            ))
         });
         Ok(())
     }
@@ -236,8 +243,7 @@ impl CloudCompute for InMemoryCompute {
             .expect("mutex")
             .keypairs
             .get(name)
-            .cloned()
-            .map(Fingerprint))
+            .cloned())
     }
 
     async fn keypair_delete(&self, name: &KeyName) -> Result<()> {

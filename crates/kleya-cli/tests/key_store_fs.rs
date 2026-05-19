@@ -42,9 +42,10 @@ fn fingerprint_is_deterministic_and_well_formatted() {
     let store = kleya_cli::key_store_fs::FsKeyStore::from_config(&cfg).unwrap();
     let name = KeyName::new("k").unwrap();
     store.generate(&name).unwrap();
-    let fp1 = store.fingerprint(&name).unwrap().0;
-    let fp2 = store.fingerprint(&name).unwrap().0;
+    let fp1 = store.fingerprint(&name).unwrap();
+    let fp2 = store.fingerprint(&name).unwrap();
     assert_eq!(fp1, fp2, "fingerprint must be deterministic");
-    assert_eq!(fp1.len(), 47, "aa:bb:... format is 47 chars");
-    assert!(fp1.chars().filter(|c| *c == ':').count() == 15);
+    let s = fp1.as_str();
+    assert_eq!(s.len(), 47, "aa:bb:... format is 47 chars");
+    assert!(s.chars().filter(|c| *c == ':').count() == 15);
 }

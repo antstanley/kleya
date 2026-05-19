@@ -61,8 +61,8 @@ pub async fn wait_cloud_init(
         .status()
         .await?;
     if !status.success() {
-        return Err(Error::ConfigInvalid {
-            reason: format!("cloud-init wait failed (exit {status})"),
+        return Err(Error::CloudInitFailed {
+            status: status.to_string(),
         });
     }
     Ok(())

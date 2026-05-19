@@ -8,6 +8,7 @@ use md5::{Digest, Md5};
 use kleya_core::{
     config::KeysCfg,
     model::key::{Fingerprint, KeyName, KeyPair, PublicKey},
+    parsed_config::ParsedConfig,
     ports::key_store::KeyStore,
     Error, Result,
 };
@@ -18,20 +19,22 @@ const FILE_MODE: u32 = 0o600;
 
 pub struct FsKeyStore {
     dir: PathBuf,
-    default_key: String,
 }
 
 impl FsKeyStore {
-    pub fn from_config(cfg: &KeysCfg) -> Result<Self> {
-        let dir = PathBuf::from(shellexpand::tilde(&cfg.dir).to_string());
+    /// Construct from a parsed config (preferred — `keys_dir` is already
+    /// tilde-expanded and validated).
+    pub fn from_parsed(cfg: &ParsedConfig) -> Result<Self> {
         Ok(Self {
-            dir,
-            default_key: cfg.default_key_name.clone(),
+            dir: cfg.keys_dir.clone(),
         })
     }
-    #[must_use]
-    pub fn default_key_name(&self) -> &str {
-        &self.default_key
+
+    /// Construct directly from the on-disk `[keys]` block. Retained for
+    /// integration tests that need to point at a temporary directory.
+    pub fn from_config(cfg: &KeysCfg) -> Result<Self> {
+        let dir = PathBuf::from(shellexpand::tilde(&cfg.dir).to_string());
+        Ok(Self { dir })
     }
 
     fn path_for(&self, name: &KeyName) -> PathBuf {
@@ -42,8 +45,10 @@ impl FsKeyStore {
         let md = fs::metadata(&self.dir)?;
         let mode = md.permissions().mode() & 0o777;
         if mode != DIR_MODE {
-            return Err(Error::ConfigInvalid {
-                reason: format!("{} mode is {mode:o} not {DIR_MODE:o}", self.dir.display()),
+            return Err(Error::KeyFileMode {
+                path: self.dir.clone(),
+                mode,
+                want: DIR_MODE,
             });
         }
         Ok(())
@@ -54,8 +59,10 @@ impl FsKeyStore {
         let md = fs::metadata(p)?;
         let mode = md.permissions().mode() & 0o777;
         if mode != FILE_MODE {
-            return Err(Error::ConfigInvalid {
-                reason: format!("{} mode is {mode:o} not {FILE_MODE:o}", p.display()),
+            return Err(Error::KeyFileMode {
+                path: p.clone(),
+                mode,
+                want: FILE_MODE,
             });
         }
         Ok(())
@@ -98,7 +105,7 @@ impl KeyStore for FsKeyStore {
         self.assert_file_mode(&path)?;
         Ok(KeyPair {
             name: name.clone(),
-            public: PublicKey(public),
+            public: PublicKey::new(public)?,
             private: private.to_string(),
         })
     }
@@ -116,7 +123,7 @@ impl KeyStore for FsKeyStore {
             .map_err(|e| Error::ConfigInvalid {
                 reason: format!("openssh: {e}"),
             })?;
-        Ok(PublicKey(pub_text))
+        PublicKey::new(pub_text)
     }
 
     fn private_path(&self, name: &KeyName) -> Result<PathBuf> {
@@ -149,14 +156,11 @@ impl KeyStore for FsKeyStore {
         let priv_key = PrivateKey::from_openssh(&text).map_err(|e| Error::ConfigInvalid {
             reason: format!("openssh: {e}"),
         })?;
-        let ed =
-            priv_key
-                .public_key()
-                .key_data()
-                .ed25519()
-                .ok_or_else(|| Error::ConfigInvalid {
-                    reason: "only Ed25519 keys are supported".into(),
-                })?;
+        let ed = priv_key
+            .public_key()
+            .key_data()
+            .ed25519()
+            .ok_or(Error::UnsupportedKeyAlgorithm)?;
         // SPKI for Ed25519: SEQUENCE { SEQUENCE { OID 1.3.101.112 }, BIT STRING <32 bytes> }
         // 30 2A 30 05 06 03 2B 65 70 03 21 00 <pubkey>
         let mut der = Vec::with_capacity(44);
@@ -176,6 +180,6 @@ impl KeyStore for FsKeyStore {
             out.push(c);
         }
         assert_eq!(out.len(), 47, "colon-formatted fingerprint is 47 chars");
-        Ok(Fingerprint(out))
+        Fingerprint::new(out)
     }
 }

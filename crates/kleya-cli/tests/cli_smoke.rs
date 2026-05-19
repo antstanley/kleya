@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[tokio::test]
 async fn list_subcommand_runs_against_fake_with_no_instances() {
     let cli = Cli::parse_from(["kleya", "list"]);
-    let cfg = Arc::new(kleya_core::Config::default());
+    let cfg = Arc::new(kleya_core::Config::default().parse().unwrap());
     let compute: Arc<dyn kleya_core::ports::cloud_compute::CloudCompute> =
         Arc::new(InMemoryCompute::new());
     let key_store: Arc<dyn kleya_core::ports::key_store::KeyStore> =

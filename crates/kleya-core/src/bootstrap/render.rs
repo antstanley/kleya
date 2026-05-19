@@ -31,17 +31,25 @@ pub fn render(vars: &BootstrapVars<'_>) -> Result<String> {
 }
 
 pub fn render_with(template: &str, vars: &BootstrapVars<'_>) -> Result<String> {
-    assert!(!template.is_empty(), "bootstrap template empty");
-    assert!(vars.node_major >= 18, "node_major too low");
+    if template.is_empty() {
+        return Err(Error::BootstrapRender {
+            reason: "bootstrap template is empty".into(),
+        });
+    }
+    if vars.node_major < 18 {
+        return Err(Error::BootstrapRender {
+            reason: format!("node_major must be >= 18 (got {})", vars.node_major),
+        });
+    }
     let mut env = Environment::new();
     env.add_template("setup", template)
-        .map_err(|e| Error::ConfigInvalid {
-            reason: format!("template render: {e}"),
+        .map_err(|e| Error::BootstrapRender {
+            reason: e.to_string(),
         })?;
     let tpl = env
         .get_template("setup")
-        .map_err(|e| Error::ConfigInvalid {
-            reason: format!("template render: {e}"),
+        .map_err(|e| Error::BootstrapRender {
+            reason: e.to_string(),
         })?;
     let out = tpl
         .render(context! {
@@ -53,10 +61,14 @@ pub fn render_with(template: &str, vars: &BootstrapVars<'_>) -> Result<String> {
             extra_pre_lines          => vars.extra_pre_lines,
             extra_post_lines         => vars.extra_post_lines,
         })
-        .map_err(|e| Error::ConfigInvalid {
-            reason: format!("template render: {e}"),
+        .map_err(|e| Error::BootstrapRender {
+            reason: e.to_string(),
         })?;
-    assert!(!out.is_empty(), "rendered output empty");
+    if out.is_empty() {
+        return Err(Error::BootstrapRender {
+            reason: "rendered bootstrap script is empty".into(),
+        });
+    }
     Ok(out)
 }
 

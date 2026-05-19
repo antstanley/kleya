@@ -1,11 +1,13 @@
+#![allow(missing_docs)]
+
 use crate::error::{Error, Result};
 use crate::limits::{TAG_KEY_BYTES_MAX, TAG_VALUE_BYTES_MAX};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag {
-    pub key: String,
-    pub value: String,
+    key: String,
+    value: String,
 }
 
 impl Tag {
@@ -28,6 +30,16 @@ impl Tag {
             });
         }
         Ok(Self { key, value })
+    }
+
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
     }
 }
 

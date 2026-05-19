@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::Config;
 use crate::error::Error;
 use crate::limits::{
     SSH_PROBE_INTERVAL_SECONDS, SSH_PROBE_PORT, SSH_PROBE_TCP_TIMEOUT_MS, SSH_PROBE_TIMEOUT_SECONDS,
@@ -10,6 +9,7 @@ use crate::limits::{
 use crate::model::instance::{Instance, InstanceFilter, InstanceId};
 use crate::model::key::KeyName;
 use crate::model::tag::{KLEYA_TAG_KEY, KLEYA_TAG_MANAGED};
+use crate::parsed_config::ParsedConfig;
 use crate::ports::cloud_compute::CloudCompute;
 use crate::ports::key_store::KeyStore;
 use crate::Result;
@@ -19,12 +19,40 @@ use regex::Regex;
 pub struct ConnectService {
     pub compute: Arc<dyn CloudCompute>,
     pub key_store: Arc<dyn KeyStore>,
-    pub config: Arc<Config>,
+    pub config: Arc<ParsedConfig>,
     pub region: String,
 }
 
+/// A fully-resolved ssh invocation. Program is required by the type so
+/// callers cannot accidentally try to `exec` an empty argv.
+#[derive(Debug, Clone)]
+pub struct SshCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl SshCommand {
+    /// Render as a single shell-quoted line — used by `--print`.
+    #[must_use]
+    pub fn shell_quote(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(|s| {
+                if s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_/.@=:".contains(c))
+                {
+                    s.to_string()
+                } else {
+                    format!("'{}'", s.replace('\'', r"'\''"))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 pub struct ConnectPlan {
-    pub argv: Vec<String>,
+    pub command: SshCommand,
     pub instance_id: InstanceId,
     pub endpoint: String,
     pub key_path: PathBuf,
@@ -45,23 +73,18 @@ impl ConnectService {
     pub async fn plan(&self, opts: &ConnectOpts) -> Result<ConnectPlan> {
         if let Some(s) = &opts.tmux_session {
             if !TMUX_SESSION_RE.is_match(s) {
-                return Err(Error::ConfigInvalid {
-                    reason: format!("tmux session '{s}' must match ^[a-z0-9_-]{{1,63}}$"),
-                });
+                return Err(Error::InvalidTmuxSession { name: s.clone() });
             }
         }
         let inst = self.resolve(opts).await?;
         let key_name = self.resolve_key(&inst)?;
         let key_path = self.key_store.private_path(&key_name)?;
-        let endpoint = inst
-            .public_dns
-            .clone()
-            .ok_or_else(|| Error::ConfigInvalid {
-                reason: format!("instance {} has no public DNS", inst.id.as_str()),
-            })?;
-        let argv = self.build_argv(&endpoint, &key_path, opts);
+        let endpoint = inst.public_dns.clone().ok_or_else(|| Error::NoPublicDns {
+            instance: inst.id.clone(),
+        })?;
+        let command = self.build_command(&endpoint, &key_path, opts);
         Ok(ConnectPlan {
-            argv,
+            command,
             instance_id: inst.id,
             endpoint,
             key_path,
@@ -78,7 +101,7 @@ impl ConnectService {
                 .instance_describe(&InstanceId::new(&opts.handle)?)
                 .await;
         }
-        let candidates = self
+        let mut candidates = self
             .compute
             .instance_list(&InstanceFilter {
                 name: Some(opts.handle.clone()),
@@ -91,12 +114,7 @@ impl ConnectService {
                 name: opts.handle.clone(),
                 region: self.region.clone(),
             }),
-            1 => candidates
-                .into_iter()
-                .next()
-                .ok_or_else(|| Error::ConfigInvalid {
-                    reason: "candidates length 1 but iterator empty".into(),
-                }),
+            1 => Ok(candidates.swap_remove(0)),
             _ => Err(Error::AmbiguousHandle {
                 name: opts.handle.clone(),
                 candidates: candidates.into_iter().map(|i| i.id).collect(),
@@ -108,66 +126,59 @@ impl ConnectService {
         let tagged = inst
             .tags
             .iter()
-            .find(|t| t.key == KLEYA_TAG_KEY)
-            .map(|t| t.value.clone());
+            .find(|t| t.key() == KLEYA_TAG_KEY)
+            .map(|t| t.value().to_string());
         if let Some(n) = tagged {
             return KeyName::new(n);
         }
         let managed = inst
             .tags
             .iter()
-            .any(|t| t.key == KLEYA_TAG_MANAGED && t.value == "true");
+            .any(|t| t.key() == KLEYA_TAG_MANAGED && t.value() == "true");
         if !managed {
-            return Err(Error::ConfigInvalid {
-                reason: format!(
-                    "instance {} not managed by kleya; pass --instance-id and configure a key",
-                    inst.id.as_str()
-                ),
+            return Err(Error::UnmanagedInstance {
+                instance: inst.id.clone(),
             });
         }
-        let default = self.config.keys.default_key_name.trim();
-        if default.is_empty() {
-            return Err(Error::ConfigInvalid {
-                reason: "no kleya:key tag on instance and no keys.default_key_name in config; \
-                         re-launch via kleya launch or pass --instance-id with a known key"
-                    .into(),
-            });
-        }
-        KeyName::new(default)
+        Ok(self.config.default_key_name.clone())
     }
 
-    fn build_argv(
+    fn build_command(
         &self,
         endpoint: &str,
         key_path: &std::path::Path,
         opts: &ConnectOpts,
-    ) -> Vec<String> {
-        let mut argv: Vec<String> = vec!["ssh".into()];
-        argv.push("-i".into());
-        argv.push(key_path.to_string_lossy().into_owned());
-        argv.push("-o".into());
-        argv.push("StrictHostKeyChecking=accept-new".into());
-        argv.push("-o".into());
-        argv.push("ServerAliveInterval=30".into());
-        argv.push("-o".into());
-        argv.push("ConnectTimeout=10".into());
+    ) -> SshCommand {
+        let mut args: Vec<String> = vec![
+            "-i".into(),
+            key_path.to_string_lossy().into_owned(),
+            "-o".into(),
+            "StrictHostKeyChecking=accept-new".into(),
+            "-o".into(),
+            "ServerAliveInterval=30".into(),
+            "-o".into(),
+            "ConnectTimeout=10".into(),
+        ];
         for a in &self.config.ssh.extra_args {
-            argv.push(a.clone());
+            args.push(a.clone());
         }
-        argv.push("-t".into());
-        argv.push(format!("{}@{endpoint}", self.config.ssh.user));
+        args.push("-t".into());
+        args.push(format!("{}@{endpoint}", self.config.ssh.user));
         if !opts.no_tmux && self.config.ssh.tmux {
             let session = opts
                 .tmux_session
                 .clone()
                 .unwrap_or_else(|| self.config.ssh.tmux_session.clone());
-            argv.push("tmux".into());
-            argv.push("new-session".into());
-            argv.push("-A".into());
-            argv.push("-s".into());
-            argv.push(session);
+            args.push("tmux".into());
+            args.push("new-session".into());
+            args.push("-A".into());
+            args.push("-s".into());
+            args.push(session);
         }
-        argv
+        SshCommand {
+            program: "ssh".into(),
+            args,
+        }
     }
 }
 
@@ -187,13 +198,18 @@ pub const TCP_TIMEOUT_MS: u32 = SSH_PROBE_TCP_TIMEOUT_MS;
 mod tests {
     use super::*;
     use crate::commands::launch::{LaunchOpts, LaunchService};
+    use crate::config::Config;
     use crate::test_support::{FakeIdGen, InMemoryCompute, InMemoryKeyStore};
+
+    fn parsed() -> Arc<ParsedConfig> {
+        Arc::new(Config::default().parse().expect("default parses"))
+    }
 
     #[tokio::test]
     async fn build_argv_includes_tmux_by_default() {
         let compute = Arc::new(InMemoryCompute::new());
         let key_store: Arc<dyn KeyStore> = Arc::new(InMemoryKeyStore::new());
-        let cfg = Arc::new(Config::default());
+        let cfg = parsed();
         let svc = ConnectService {
             compute: compute.clone(),
             key_store: key_store.clone(),
@@ -227,14 +243,16 @@ mod tests {
             })
             .await
             .expect("plan ok");
-        assert!(plan.argv.iter().any(|a| a == "tmux"));
+        assert_eq!(plan.command.program, "ssh");
+        assert!(plan.command.args.iter().any(|a| a == "tmux"));
         let dash_s = plan
-            .argv
+            .command
+            .args
             .iter()
             .position(|a| a == "-s")
-            .expect("argv contains -s");
+            .expect("args contains -s");
         assert_eq!(
-            plan.argv.get(dash_s + 1),
+            plan.command.args.get(dash_s + 1),
             Some(&cfg.ssh.tmux_session),
             "tmux session arg should match Config default"
         );
@@ -244,7 +262,7 @@ mod tests {
     async fn resolve_key_rejects_unmanaged_instance() {
         use crate::model::instance::{Instance, InstanceId, InstanceState};
         use crate::model::tag::Tag;
-        let cfg = Arc::new(Config::default());
+        let cfg = parsed();
         let compute: Arc<dyn CloudCompute> = Arc::new(InMemoryCompute::new());
         let key_store: Arc<dyn KeyStore> = Arc::new(InMemoryKeyStore::new());
         let svc = ConnectService {
@@ -262,7 +280,6 @@ mod tests {
             tags: vec![Tag::new("Project", "other").unwrap()],
         };
         let err = svc.resolve_key(&inst).unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("not managed by kleya"), "got: {msg}");
+        assert!(matches!(err, Error::UnmanagedInstance { .. }));
     }
 }

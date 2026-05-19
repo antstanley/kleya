@@ -1,7 +1,7 @@
 use aws_sdk_ec2::types as e;
 use kleya_core::model::{
     instance::{Instance, InstanceId, InstanceName, InstanceState},
-    tag::Tag,
+    tag::{Tag, KLEYA_TAG_NAME},
 };
 
 #[must_use]
@@ -20,12 +20,26 @@ pub fn map_instance(i: &e::Instance) -> Option<Instance> {
     let tags: Vec<Tag> = i
         .tags()
         .iter()
-        .filter_map(|t| Tag::new(t.key()?, t.value()?).ok())
+        .filter_map(|t| {
+            let key = t.key()?;
+            let value = t.value()?;
+            match Tag::new(key, value) {
+                Ok(tag) => Some(tag),
+                Err(err) => {
+                    tracing::warn!(
+                        key = %key,
+                        error = %err,
+                        "dropping instance tag that fails kleya validation",
+                    );
+                    None
+                }
+            }
+        })
         .collect();
     let name = tags
         .iter()
-        .find(|t| t.key == "Name")
-        .and_then(|t| InstanceName::new(&t.value).ok());
+        .find(|t| t.key() == KLEYA_TAG_NAME)
+        .and_then(|t| InstanceName::new(t.value()).ok());
     Some(Instance {
         id,
         name,

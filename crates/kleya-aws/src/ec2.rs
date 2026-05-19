@@ -66,7 +66,7 @@ fn build_request_launch_template_data(spec: &TemplateSpec) -> e::RequestLaunchTe
     let tags: Vec<e::Tag> = spec
         .tags
         .iter()
-        .filter_map(|t| e::Tag::builder().key(&t.key).value(&t.value).build().into())
+        .map(|t| e::Tag::builder().key(t.key()).value(t.value()).build())
         .collect();
     let market = match spec.market {
         MarketKind::Spot => Some(
@@ -98,12 +98,12 @@ fn build_request_launch_template_data(spec: &TemplateSpec) -> e::RequestLaunchTe
         data = data.set_security_group_ids(Some(
             spec.security_group_ids
                 .iter()
-                .map(|s| s.0.clone())
+                .map(|s| s.as_str().to_string())
                 .collect(),
         ));
     }
     if let Some(a) = &spec.ami_id {
-        data = data.image_id(a.0.clone());
+        data = data.image_id(a.as_str().to_string());
     }
     if let Some(m) = market {
         data = data.instance_market_options(m);
@@ -118,7 +118,7 @@ impl CloudCompute for AwsEc2 {
         let out = self
             .ec2
             .create_launch_template()
-            .launch_template_name(&spec.name.0)
+            .launch_template_name(spec.name.as_str())
             .launch_template_data(data)
             .send()
             .await
@@ -129,7 +129,7 @@ impl CloudCompute for AwsEc2 {
         let id = lt
             .launch_template_id()
             .ok_or(AwsError::MissingField("launch_template_id"))?;
-        Ok(TemplateId(id.to_string()))
+        Ok(TemplateId::new(id.to_string())?)
     }
 
     async fn template_update(
@@ -141,7 +141,7 @@ impl CloudCompute for AwsEc2 {
         let out = self
             .ec2
             .create_launch_template_version()
-            .launch_template_id(&id.0)
+            .launch_template_id(id.as_str())
             .launch_template_data(data)
             .send()
             .await
@@ -152,7 +152,7 @@ impl CloudCompute for AwsEc2 {
             .ok_or(AwsError::MissingField("version_number"))?;
         self.ec2
             .modify_launch_template()
-            .launch_template_id(&id.0)
+            .launch_template_id(id.as_str())
             .default_version(ver.to_string())
             .send()
             .await
@@ -174,9 +174,12 @@ impl CloudCompute for AwsEc2 {
                 let Ok(version) = u64::try_from(lt.latest_version_number().unwrap_or(0)) else {
                     continue;
                 };
+                let (Ok(id), Ok(name)) = (TemplateId::new(id), TemplateName::new(name)) else {
+                    continue;
+                };
                 acc.push(TemplateSummary {
-                    id: TemplateId(id.to_string()),
-                    name: TemplateName(name.to_string()),
+                    id,
+                    name,
                     latest_version: TemplateVersion(version),
                 });
             }
@@ -188,7 +191,7 @@ impl CloudCompute for AwsEc2 {
         let out = match self
             .ec2
             .describe_launch_templates()
-            .launch_template_names(&name.0)
+            .launch_template_names(name.as_str())
             .send()
             .await
         {
@@ -208,7 +211,7 @@ impl CloudCompute for AwsEc2 {
         let latest_version = u64::try_from(raw_version)
             .map_err(|_| AwsError::MissingField("latest_version_number"))?;
         Ok(Some(TemplateSummary {
-            id: TemplateId(id.to_string()),
+            id: TemplateId::new(id)?,
             name: name.clone(),
             latest_version: TemplateVersion(latest_version),
         }))
@@ -217,7 +220,7 @@ impl CloudCompute for AwsEc2 {
     async fn template_delete(&self, id: &TemplateId) -> Result<()> {
         self.ec2
             .delete_launch_template()
-            .launch_template_id(&id.0)
+            .launch_template_id(id.as_str())
             .send()
             .await
             .map_err(sdk)?;
@@ -233,7 +236,7 @@ impl CloudCompute for AwsEc2 {
             e::Tag::builder().key("kleya:managed").value("true").build(),
             e::Tag::builder()
                 .key("kleya:template")
-                .value(&req.template.0)
+                .value(req.template.as_str())
                 .build(),
             e::Tag::builder()
                 .key("kleya:key")
@@ -245,7 +248,7 @@ impl CloudCompute for AwsEc2 {
             .run_instances()
             .launch_template(
                 e::LaunchTemplateSpecification::builder()
-                    .launch_template_name(&req.template.0)
+                    .launch_template_name(req.template.as_str())
                     .build(),
             )
             .min_count(1)
@@ -400,7 +403,7 @@ impl CloudCompute for AwsEc2 {
         }
         if let Some(id) = existing {
             self.authorize_default_ingress(&id).await?;
-            return Ok(SecurityGroupId(id));
+            return SecurityGroupId::new(id);
         }
         let created = self
             .ec2
@@ -435,7 +438,7 @@ impl CloudCompute for AwsEc2 {
             }
         };
         self.authorize_default_ingress(&id).await?;
-        Ok(SecurityGroupId(id))
+        Ok(SecurityGroupId::new(id)?)
     }
 
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()> {
@@ -455,7 +458,7 @@ impl CloudCompute for AwsEc2 {
             .ec2
             .import_key_pair()
             .key_name(name.as_str())
-            .public_key_material(aws_sdk_ec2::primitives::Blob::new(public_key.0.as_bytes()))
+            .public_key_material(aws_sdk_ec2::primitives::Blob::new(public_key.as_bytes()))
             .send()
             .await;
         if let Err(err) = res {
@@ -471,7 +474,11 @@ impl CloudCompute for AwsEc2 {
             .await
             .map_err(sdk)?;
         if confirmed.key_pairs().is_empty() {
-            return Err(AwsError::MissingField("key_pair after ensure").into());
+            return Err(AwsError::PostconditionViolated {
+                op: "ensure_default_keypair",
+                detail: "key pair still absent after import",
+            }
+            .into());
         }
         Ok(())
     }
@@ -492,7 +499,7 @@ impl CloudCompute for AwsEc2 {
             .key_pairs()
             .first()
             .and_then(|k| k.key_fingerprint())
-            .map(|s| Fingerprint(s.to_string())))
+            .map(Fingerprint::from_trusted))
     }
 
     async fn keypair_delete(&self, name: &KeyName) -> Result<()> {
@@ -515,7 +522,11 @@ impl CloudCompute for AwsEc2 {
             .await
         {
             if !after.key_pairs().is_empty() {
-                return Err(AwsError::MissingField("keypair still present after delete").into());
+                return Err(AwsError::PostconditionViolated {
+                    op: "keypair_delete",
+                    detail: "key pair still present after delete",
+                }
+                .into());
             }
         }
         Ok(())
@@ -538,8 +549,8 @@ impl CloudCompute for AwsEc2 {
             .vpcs()
             .first()
             .and_then(|v| v.vpc_id())
-            .ok_or_else(|| kleya_core::Error::ConfigInvalid {
-                reason: format!("no default VPC in region {}", self.region),
+            .ok_or_else(|| kleya_core::Error::NoDefaultVpc {
+                region: self.region.clone(),
             })?;
         let subs = self
             .ec2
@@ -558,13 +569,12 @@ impl CloudCompute for AwsEc2 {
                 _ => {}
             }
         }
-        let id =
-            picked
-                .and_then(|s| s.subnet_id())
-                .ok_or_else(|| kleya_core::Error::ConfigInvalid {
-                    reason: format!("no subnet in default VPC of region {}", self.region),
-                })?;
-        Ok(SubnetId(id.to_string()))
+        let id = picked.and_then(|s| s.subnet_id()).ok_or_else(|| {
+            kleya_core::Error::NoSubnetInDefaultVpc {
+                region: self.region.clone(),
+            }
+        })?;
+        Ok(SubnetId::new(id)?)
     }
 
     async fn resolve_ami_alias(&self, alias: &str) -> Result<AmiId> {
@@ -576,8 +586,8 @@ impl CloudCompute for AwsEc2 {
                 "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
             }
             other => {
-                return Err(kleya_core::Error::ConfigInvalid {
-                    reason: format!("unknown ami_alias '{other}'"),
+                return Err(kleya_core::Error::UnknownAmiAlias {
+                    alias: other.into(),
                 });
             }
         };
@@ -592,6 +602,6 @@ impl CloudCompute for AwsEc2 {
             .parameter()
             .and_then(|p| p.value())
             .ok_or_else(|| AwsError::SsmMissing(param.into()))?;
-        Ok(AmiId(val.to_string()))
+        Ok(AmiId::new(val.to_string())?)
     }
 }

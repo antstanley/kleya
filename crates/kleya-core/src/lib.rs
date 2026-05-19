@@ -15,6 +15,7 @@ pub mod config;
 pub mod error;
 pub mod limits;
 pub mod model;
+pub mod parsed_config;
 pub mod ports;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -22,3 +23,4 @@ pub mod util;
 
 pub use config::Config;
 pub use error::{Error, Result};
+pub use parsed_config::{ParsedConfig, ParsedTemplate};

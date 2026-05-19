@@ -33,7 +33,7 @@ impl KeyStore for InMemoryKeyStore {
     fn generate(&self, name: &KeyName) -> Result<KeyPair> {
         let pair = KeyPair {
             name: name.clone(),
-            public: PublicKey(format!("ssh-ed25519 FAKE {name}")),
+            public: PublicKey::new(format!("ssh-ed25519 FAKE {name}"))?,
             private: format!("-----BEGIN FAKE KEY-----\n{name}\n-----END FAKE KEY-----\n"),
         };
         self.keys
@@ -70,7 +70,7 @@ impl KeyStore for InMemoryKeyStore {
 
     fn fingerprint(&self, name: &KeyName) -> Result<Fingerprint> {
         let pub_text = self.read_public(name)?;
-        let h = crc32fast::hash(pub_text.0.as_bytes());
-        Ok(Fingerprint(format!("fake-md5:{h:08x}")))
+        let h = crc32fast::hash(pub_text.as_bytes());
+        Ok(Fingerprint::from_trusted(format!("fake-md5:{h:08x}")))
     }
 }

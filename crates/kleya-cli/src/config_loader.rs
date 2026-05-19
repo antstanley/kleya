@@ -2,14 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kleya_core::limits::CONFIG_BYTES_MAX;
-use kleya_core::{Config, Error, Result};
+use kleya_core::{Config, Error, ParsedConfig, Result};
 
-pub fn load(explicit: Option<&str>) -> Result<Config> {
+/// Load and parse the kleya config from disk (or return defaults if none found).
+/// The returned [`ParsedConfig`] carries typed views of every validated value
+/// — commands should not re-parse strings from it.
+pub fn load(explicit: Option<&str>) -> Result<ParsedConfig> {
     let path = resolved_path(explicit);
     let Some(path) = path else {
-        let cfg = Config::default();
-        cfg.validate()?;
-        return Ok(cfg);
+        return Config::default().parse();
     };
     let p = PathBuf::from(shellexpand::tilde(&path).to_string());
     let bytes = fs::read(&p)?;
@@ -21,9 +22,7 @@ pub fn load(explicit: Option<&str>) -> Result<Config> {
     let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
         reason: format!("config not utf-8: {e}"),
     })?;
-    let cfg = parse_by_ext(&p, &text)?;
-    cfg.validate()?;
-    Ok(cfg)
+    parse_by_ext(&p, &text)?.parse()
 }
 
 fn parse_by_ext(path: &Path, text: &str) -> Result<Config> {

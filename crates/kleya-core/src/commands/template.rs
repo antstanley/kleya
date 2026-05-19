@@ -1,25 +1,23 @@
 use std::sync::Arc;
 
-use crate::config::Config;
 use crate::model::template::{
     TemplateId, TemplateName, TemplateSpec, TemplateSummary, TemplateVersion,
 };
+use crate::parsed_config::ParsedConfig;
 use crate::ports::cloud_compute::CloudCompute;
 use crate::Result;
 
 pub struct TemplateService {
     pub compute: Arc<dyn CloudCompute>,
-    pub config: Arc<Config>,
+    pub config: Arc<ParsedConfig>,
 }
 
 impl TemplateService {
     pub async fn create(&self, spec: TemplateSpec) -> Result<TemplateId> {
-        assert!(!spec.name.0.is_empty(), "template name empty");
         self.compute.template_create(&spec).await
     }
 
     pub async fn update(&self, id: &TemplateId, spec: TemplateSpec) -> Result<TemplateVersion> {
-        assert!(!id.0.is_empty(), "template id empty");
         self.compute.template_update(id, &spec).await
     }
 
@@ -32,9 +30,7 @@ impl TemplateService {
             .compute
             .template_get_by_name(name)
             .await?
-            .ok_or_else(|| crate::error::Error::ConfigInvalid {
-                reason: format!("template '{}' not found", name.0),
-            })?;
+            .ok_or_else(|| crate::error::Error::TemplateNotFound { name: name.clone() })?;
         self.compute.template_delete(&summary.id).await
     }
 }

@@ -34,8 +34,8 @@ async fn create_list_delete_template() {
 
     use kleya_core::model;
     let spec = kleya_core::model::template::TemplateSpec {
-        name: model::template::TemplateName("floci-t1".into()),
-        ami_id: Some(model::region::AmiId("ami-00000000000000001".into())),
+        name: model::template::TemplateName::new("floci-t1").unwrap(),
+        ami_id: Some(model::region::AmiId::new("ami-00000000000000001").unwrap()),
         ami_alias: None,
         instance_type: "t3.micro".into(),
         key_name: model::key::KeyName::new("kleya-default").unwrap(),
