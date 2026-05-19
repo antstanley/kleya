@@ -282,3 +282,9 @@ async fn launch_errors_on_orphaned_key_when_flag_unset() {
         "got: {err:?}"
     );
 }
+
+#[test]
+fn in_memory_compute_declares_fake_md5_fingerprint_algorithm() {
+    use kleya_core::ports::cloud_compute::CloudCompute;
+    assert_eq!(InMemoryCompute::new().fingerprint_algorithm(), "fake-md5");
+}

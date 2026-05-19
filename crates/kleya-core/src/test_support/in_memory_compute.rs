@@ -246,6 +246,10 @@ impl CloudCompute for InMemoryCompute {
             .cloned())
     }
 
+    fn fingerprint_algorithm(&self) -> &'static str {
+        "fake-md5"
+    }
+
     async fn keypair_delete(&self, name: &KeyName) -> Result<()> {
         self.state.lock().expect("mutex").keypairs.remove(name);
         Ok(())

@@ -502,6 +502,10 @@ impl CloudCompute for AwsEc2 {
             .map(Fingerprint::from_trusted))
     }
 
+    fn fingerprint_algorithm(&self) -> &'static str {
+        "md5-spki-ed25519"
+    }
+
     async fn keypair_delete(&self, name: &KeyName) -> Result<()> {
         let res = self
             .ec2

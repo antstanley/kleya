@@ -30,6 +30,12 @@ pub trait CloudCompute: Send + Sync {
     async fn ensure_default_keypair(&self, name: &KeyName, public_key: &PublicKey) -> Result<()>;
     async fn ensure_default_template(&self, spec: &TemplateSpec) -> Result<TemplateId>;
     async fn keypair_fingerprint(&self, name: &KeyName) -> Result<Option<Fingerprint>>;
+    /// Identifies the fingerprint format returned by `keypair_fingerprint`.
+    /// Adapters must return a stable, lowercase, kebab-case label. AWS EC2
+    /// uses `"md5-spki-ed25519"` (MD5 of DER-encoded `SubjectPublicKeyInfo`
+    /// of the Ed25519 public key — what `DescribeKeyPairs` returns for
+    /// `ImportKeyPair`-imported keys).
+    fn fingerprint_algorithm(&self) -> &'static str;
     /// Delete a registered keypair by name. Idempotent: a missing key is
     /// treated as success. Adapters must confirm absence afterwards.
     async fn keypair_delete(&self, name: &KeyName) -> Result<()>;
