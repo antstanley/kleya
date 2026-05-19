@@ -31,3 +31,7 @@ serial_test = "3"
 [[test]]
 name = "floci_template_lifecycle"
 path = "tests/floci/template_lifecycle.rs"
+
+[[test]]
+name = "floci_instance_lifecycle"
+path = "tests/floci/instance_lifecycle.rs"
