@@ -8,11 +8,11 @@ This draft proposed enabling the `credentials-login` Cargo feature on `aws-confi
 
 Practical effect:
 
-- The `credentials-login` Cargo feature on `aws-config` is **not** enabled. Default features (`sso`, `credentials-process`, `rt-tokio`, `default-https-client`) cover the supported flows via the SDK chain.
-- No `kleya sso` subcommand tree is added.
-- No `Error::SsoLoginFailed` variant or new exit code is added.
-- No new dependencies (`aws-sdk-signin`, `p256`, `sha2`, `uuid`, `base64-simd`, `rand`) enter the binary.
+- No `kleya sso` (or `kleya login`) subcommand tree is added — that surface is the part the operator explicitly rejected.
+- No `Error::SsoLoginFailed` variant or new exit code is added; auth failures continue to surface as `Error::Adapter` (exit 70).
 
-The canonical record of how kleya consumes SSO (and every other AWS credential source) is [`docs/specs/11-credentials-and-sso.md`](../../specs/11-credentials-and-sso.md). That page describes the shipped consumption-only behaviour and records this withdrawal as a Decision.
+What this withdrawal does **not** decide:
 
-This file is kept for history; subsequent reviewers may want to see what was proposed and why it was rejected before reopening the topic.
+- The `credentials-login` Cargo feature on `aws-config` is still **expected to be enabled** in a follow-up, because the same feature also gates `aws_config::login::LoginCredentialsProvider` — the consumer that lets the default credentials chain recognise a `login_session = …` profile written by `aws login`. Enabling the feature does not introduce any CLI surface; it only lets the SDK consume credentials that the operator already obtained externally. The canonical spec page [`docs/specs/11-credentials-and-sso.md`](../../specs/11-credentials-and-sso.md) tracks the enable-the-feature work as an Open Question.
+
+This file is kept for history; subsequent reviewers may want to see what was proposed and why the CLI-surface portion was rejected before reopening the topic. The credentials-consumption portion is not rejected — only the auth-driving CLI surface.
