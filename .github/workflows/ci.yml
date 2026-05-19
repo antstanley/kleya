@@ -34,7 +34,8 @@ jobs:
     continue-on-error: true
     services:
       floci:
-        image: floci/floci:latest
+        # Pinned to the same digest as CONTRIBUTING.md's local-dev recipe.
+        image: floci/floci@sha256:43f48b8cd04354f356b859cc43a8915a88516df6530d4691159bed39b7e9ea32
         ports: ["4566:4566"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
