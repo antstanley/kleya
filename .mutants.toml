@@ -1,0 +1,26 @@
+# cargo-mutants config — high-leverage validator paths only.
+#
+# Scope is intentionally narrow: domain-type constructors and parser/
+# resolver paths where a regression would let invalid state propagate
+# silently. Adapter mapping and CLI plumbing are excluded — they're
+# too thinly tested for mutation results to be informative today.
+#
+# Run: cargo install cargo-mutants && cargo mutants
+
+examine_globs = [
+    "crates/kleya-core/src/model/**/*.rs",
+    "crates/kleya-core/src/parsed_config.rs",
+    "crates/kleya-core/src/config.rs",
+    "crates/kleya-core/src/commands/connect.rs",
+    "crates/kleya-core/src/bootstrap/encode.rs",
+]
+
+# Skip generated/snapshot files and obvious noise.
+exclude_globs = [
+    "**/tests/snapshots/**",
+]
+
+# Mutants timing out cleanly — give the test suite a generous window
+# since the workspace clean-builds.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60

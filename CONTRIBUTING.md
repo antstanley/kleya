@@ -140,6 +140,17 @@ If you need to break a rule (e.g. interior `expect` on a `Lazy<Regex>` that can'
 - **No mocking the database, no mocking IPC.** Use the in-memory fakes that implement the port traits.
 - **Snapshot tests** (via `insta`) for the rendered user-data script. Update with `cargo insta review` only after a deliberate change to the template or its variables.
 
+## Mutation testing
+
+Validator regressions are easy to miss with normal tests — a constructor that silently accepts invalid input still passes the happy-path test. We use [cargo-mutants](https://mutants.rs/) to catch this.
+
+```bash
+cargo install cargo-mutants
+cargo mutants
+```
+
+Scope and exclusions live in `.mutants.toml`. The aim is **no surviving mutants** on the listed files; if a change adds a new domain-type constructor or parser, extend `examine_globs` and add tests that kill any new mutants. Not yet wired into CI.
+
 ## VCS workflow (jj-first; git equivalents in parens)
 
 `main` is the integration bookmark. Push directly to `main` — no PR-required workflow, but PRs work fine if you want one.
