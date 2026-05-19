@@ -21,7 +21,7 @@ Numbered files in [`specs/`](specs/) are read in order; the JSON Schema sidecar 
 | [specs/08-testing.md](specs/08-testing.md) | Test tiers, Floci, snapshots, property tests, coverage floor |
 | [specs/09-architecture-principles.md](specs/09-architecture-principles.md) | Crate layout, hexagonal layering, dependency graph, runtime / process model |
 | [specs/10-development-guidelines.md](specs/10-development-guidelines.md) | Tiger-style rules, named limits, hooks, CI, release process |
-| [specs/11-credentials-and-sso.md](specs/11-credentials-and-sso.md) | AWS credentials chain, profile / region resolution, SSO via cached tokens, why kleya never owns login |
+| [specs/11-credentials-and-sso.md](specs/11-credentials-and-sso.md) | AWS credentials chain, profile / region resolution, SSO + `aws login` console-credentials via cached tokens, why kleya never owns login |
 | [specs/canonical-types.schema.json](specs/canonical-types.schema.json) | JSON Schema (Draft 2020-12) for every domain entity, config struct, and error variant |
 
 Start with the overview if you're new; jump to the relevant numbered file for everything else. Every page closes with an `Assumptions / Decisions / Open questions` block.
