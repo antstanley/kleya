@@ -200,6 +200,6 @@ The feature is enabled by `dev-dependencies` automatically when `kleya-core` is 
 
 **Open questions**
 
-- *Pagination caps.* `instance_list` and `template_list` walk SDK paginators without an explicit page-count ceiling. A pathological account with 10k+ launch templates would issue many calls; revisit if a real account hits this.
-- *Region-pinned clients.* `AwsEc2` is single-region today. Multi-region orchestration is non-goal #2 in [00-overview.md](00-overview.md); when a second adapter is added, decide whether per-call region overrides become a `CloudCompute` parameter or a per-`CloudCompute`-instance setting.
-- *Non-AWS adapter parity.* The `keypair_fingerprint` contract (EC2 MD5-of-DER-SPKI) is provider-specific. A future GCP or Hetzner adapter will need its own fingerprint algorithm; whether the trait should expose `fn fingerprint_algorithm(&self) -> &str` so the local `KeyStore` can match it is unresolved.
+- *Pagination caps.* Deferred: `instance_list` and `template_list` walk SDK paginators without an explicit page-count ceiling. Fine for now; revisit if a real account hits 10k+ launch templates.
+- *Region-pinned clients.* Deferred: single-region `AwsEc2` is fine for now. When a second adapter lands, decide whether per-call region overrides become a `CloudCompute` parameter or a per-instance setting.
+- *Non-AWS adapter parity.* Resolved: add `fn fingerprint_algorithm(&self) -> &str` to `CloudCompute`. The EC2 adapter returns `"md5-spki-ed25519"` (or a similarly stable label) so other providers can identify their own fingerprint format and the local `KeyStore` can match.

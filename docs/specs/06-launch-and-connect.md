@@ -297,6 +297,6 @@ Then `instance_terminate(id)`. The CLI prompts interactively unless `--yes` is p
 
 **Open questions**
 
-- *Connect retry on `cloud-init status --wait` transient failure.* Today a non-zero exit is fatal. cloud-init's own status reporting is reliable in our experience, but if we see flaky failures, a single retry with a short delay would be cheap.
-- *Auto-tightening the default SG.* The current `0.0.0.0/0` ingress is the simplest thing that works; gating to the operator's current egress IP would need either an HTTP call to a reflection service or a `--my-ip` flag. Both feel like a separate spec.
-- *Multi-instance launches.* Today `RunInstances` is called with `min_count=max_count=1`. If we expose `--count`, the orchestration above becomes a loop over a list of instances — the keypair lifecycle still runs once, but the tag generation and wait need fan-out. Deferred.
+- *Connect retry on `cloud-init status --wait` transient failure.* Deferred (open): keep treating a non-zero exit as fatal until we see flakes. A single retry with a short delay would be cheap if needed; revisit when flakes appear.
+- *Auto-tightening the default SG.* Deferred (open): see [00-overview.md](00-overview.md). Gating `0.0.0.0/0` to the operator's egress IP needs exploration (HTTP reflection service vs. `--my-ip` flag); revisit before changing the default.
+- *Multi-instance launches.* Deferred: `RunInstances` keeps `min_count=max_count=1`. Exposing `--count` (with fan-out tag generation and waiting, single keypair lifecycle) stays out of scope for now.

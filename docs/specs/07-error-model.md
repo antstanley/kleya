@@ -199,5 +199,5 @@ Special-case adapter logic (treating `InvalidGroup.Duplicate` / `InvalidKeyPair.
 
 **Open questions**
 
-- *Variant for `cloud-init status --wait` non-zero.* Today this is `ConfigInvalid { reason: "cloud-init wait failed (exit N)" }`. Treating it as a distinct `CloudInitFailed` variant with its own exit code (say, 8) would let operators script around it; deferred until someone needs to.
-- *Provider tag on `Adapter`.* `provider` is a `&'static str` today. Constraining to an enum (`Provider::AwsEc2`) would catch typos at compile time but couple `kleya-core` to the list of provider names. Defer until a second adapter exists.
+- *Variant for `cloud-init status --wait` non-zero.* Resolved (implemented): the `CloudInitFailed` variant exists with exit code 8 (added in the pre-spec-update refactor commit), so operators can script around cloud-init failure distinctly from `ConfigInvalid`.
+- *Provider tag on `Adapter`.* Deferred: `provider` remains a `&'static str`. Revisit (and consider constraining to a `Provider::AwsEc2`-style enum) once a second adapter is implemented.

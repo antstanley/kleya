@@ -241,5 +241,5 @@ Anyone tweaking a limit that breaks these relationships sees a compile error, no
 
 **Open questions**
 
-- *Provider selection at the CLI layer.* Today `dispatch::run` constructs `AwsEc2` unconditionally. When a second adapter exists, decide whether selection is a CLI flag (`--provider aws|gcp`), a config field (`provider = "aws"`), or implicit by some other detection. Defer until needed.
-- *Common adapter test harness.* The Floci-backed tests are AWS-specific. A second adapter would need its own emulator (or live tests against a sandbox). Whether to factor out a shared test harness or let each adapter ship its own is an open call.
+- *Provider selection at the CLI layer.* Resolved: the provider is chosen via a `provider` config field, with a `--provider` CLI flag override. `dispatch::run` reads that selection rather than constructing `AwsEc2` unconditionally.
+- *Common adapter test harness.* Resolved: each adapter ships its own test harness (Floci for AWS, equivalents for future providers). Do not factor out a shared harness.

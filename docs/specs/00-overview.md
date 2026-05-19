@@ -125,6 +125,6 @@ Operators who drive agentic coding sessions on disposable cloud boxes need a rep
 
 **Open questions**
 
-- *Non-AWS adapter shape.* When a second provider (GCP / Hetzner / bare-metal) is added, will `CloudCompute` need extending for provider-specific notions like preemption notifications, or can it remain as-is? Resolved when the second adapter lands.
-- *China / GovCloud regions.* `Region` validation refuses `cn-*` and `us-gov-*`. If demand emerges, the regex lifts in a follow-up spec rather than ad-hoc here.
-- *Security group hardening.* The auto-created `kleya-default` SG opens `22/tcp` from `0.0.0.0/0`. Tightening (e.g., to the launching operator's egress IP) is left to a later spec; see [06-launch-and-connect.md](06-launch-and-connect.md).
+- *Non-AWS adapter shape.* Resolved: `CloudCompute` does not need to grow preemption-notification (or other provider-specific) concepts when a second provider lands; the existing trait shape is sufficient.
+- *China / GovCloud regions.* Deferred: `Region` validation continues to refuse `cn-*` and `us-gov-*`; lift the regex when there is concrete demand.
+- *Security group hardening.* Deferred (open): the auto-created `kleya-default` SG keeps `22/tcp` open from `0.0.0.0/0`. Tightening to the operator's egress IP needs exploration work; revisit before changing the default. See [06-launch-and-connect.md](06-launch-and-connect.md).

@@ -182,5 +182,5 @@ The handle-resolution outcomes (`InstanceNotFound`, single hit, `AmbiguousHandle
 
 **Open questions**
 
-- *Stop / restart workflow.* `InstanceState` carries `Stopping` and `Stopped` because the AWS SDK returns them, but no command operates on stopped instances today. Decide whether `kleya stop` / `kleya start` join the surface or whether stop / start is intentionally out of scope.
-- *Tag schema versioning.* If the four `kleya:*` tag keys ever change, how do old instances upgrade in place? Today the answer is "they don't — terminate and re-launch." Worth recording explicitly if and when a v2 tag scheme lands.
+- *Stop / restart workflow.* Resolved: `kleya start` and `kleya stop` are in scope. The CLI surface adds both commands; the call propagates to the provider crate which performs the stop/start against the underlying compute API.
+- *Tag schema versioning.* Deferred: no v2 tag scheme is planned. Revisit if any `kleya:*` tag key ever changes; today old instances would be terminated and re-launched rather than upgraded in place.

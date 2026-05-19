@@ -175,5 +175,5 @@ Both poll loops use `kleya_core::util::wait_or_cancel` to observe cancellation w
 
 **Open questions**
 
-- *`--json` on `template list` and `list`.* Today the schemas are `serde_json::to_string_pretty(&Vec<TemplateSummary>)` and the equivalent for `Vec<Instance>`. Pin these as the public JSON shape, or wrap them in `{ "items": [...], "version": "1" }` for forward compatibility? Awaiting first non-human consumer.
-- *Auto-completion.* `clap_complete` generation would be a small win for shell users; deferred until v0.2.
+- *`--json` on `template list` and `list`.* Resolved: prioritise agent-friendly output. List commands ship a stable envelope (e.g. `{ "version": "1", "items": [...] }`) rather than raw `Vec<_>`, since kleya ships skills that consume this. Implementation is deferred to a follow-up task.
+- *Auto-completion.* Resolved: add `clap_complete` generation now rather than deferring to v0.2.

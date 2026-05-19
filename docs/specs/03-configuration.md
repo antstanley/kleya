@@ -195,6 +195,6 @@ Neither expander handles `~user` or environment-variable substitution — `~/` a
 
 **Open questions**
 
-- *Per-template `[ssh]` and `[bootstrap]` overrides.* Today `ssh` and `bootstrap` are top-level singletons. If a "low-latency dev box" template wants different `ssh.extra_args` than a "GPU build box" template, do we extend `TemplateCfg` or introduce template inheritance? Not blocking; revisit when a second concrete use case emerges.
-- *Validation of `instance_type` strings.* The CLI accepts any string and forwards it to AWS, which returns an opaque "InvalidParameterValue" if it's wrong. Pre-validating against the documented EC2 instance-type list would catch typos earlier but would also pin the validator to AWS's catalogue; left unresolved.
+- *Per-template `[ssh]` and `[bootstrap]` overrides.* Deferred: `ssh` and `bootstrap` remain top-level singletons. Revisit when a second concrete use case (e.g. "low-latency dev box" vs. "GPU build box") demands per-template override.
+- *Validation of `instance_type` strings.* Deferred: leave as-is — the CLI forwards the string to AWS and surfaces its "InvalidParameterValue" if wrong. Coupling kleya to a validated EC2 catalogue outweighs the typo-catching benefit today.
 - *Credentials and SSO.* The `Config` struct holds no credentials. Profile and region resolution is in this page; the full credentials story (which sources kleya supports, how SSO cached tokens flow through, what failure looks like, why kleya never drives login itself) is in [11-credentials-and-sso.md](11-credentials-and-sso.md). Not an open question per se — flagged here so readers looking for "how does kleya handle auth" land on the right page.

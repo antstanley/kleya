@@ -156,6 +156,6 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=eu-west-1 \
 
 **Open questions**
 
-- *Mutation testing.* `cargo-mutants` would be informative against the validator and handle-resolution code, but the runtime is non-trivial and the workspace is small enough that the human eye catches most issues. Revisit if the validator surface grows.
-- *e2e against real AWS in CI.* The harness exists but the credentials don't. When a sandbox AWS account is provisioned for the project, decide whether to wire it into a PR-to-main-only nightly run or to keep e2e fully manual.
-- *Floci `ec2:RunInstances` coverage.* Once `CreateLaunchTemplate` lands in Floci, expand the Floci tier from template-only to launch-and-terminate as well.
+- *Mutation testing.* Resolved: add `cargo-mutants` now, targeting the validator and handle-resolution paths. Even though the workspace is small, the surface that matters most for correctness is bounded and worth mutating.
+- *e2e against real AWS in CI.* Resolved: a sandbox AWS account will be provisioned. Document the IAM permissions and AWS configuration the tests require, and ensure every test cleans up the resources it creates.
+- *Floci `ec2:RunInstances` coverage.* Deferred (upstream): blocked on Floci shipping `CreateLaunchTemplate`. Expanding the Floci tier from template-only to launch-and-terminate is out of scope for kleya until then.

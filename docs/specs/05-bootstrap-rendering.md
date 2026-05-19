@@ -203,6 +203,6 @@ The pure functions `render` and `encode_user_data*` are called from both [comman
 
 **Open questions**
 
-- *Bootstrap script vendoring.* The committed `setup_devbox.sh.j2` is a forked copy of an external gist. Vendoring is fine for now; if the gist becomes a multi-script bundle, decide whether to consume it as a git submodule or as a versioned tarball.
-- *Per-template `install_dev_tools`.* The flag exists in `BootstrapVars` but is `false` by default and not exposed via config. When the second template type emerges (e.g., a minimal "ssh-only" box) we expose it; until then it stays internal.
-- *`tic -x` exit code handling.* If `tic` fails (e.g., terminfo source rejected by an older `ncurses` than expected), the instance still boots and ssh works, but `xterm-ghostty` is missing. Decide whether to make the install block `set -e`-strict or keep it best-effort.
+- *Bootstrap script vendoring.* Resolved (action): the current forked-gist `setup_devbox.sh.j2` is not maintainable as-is and needs to be revisited. A follow-up task will choose between consuming the upstream as a git submodule or as a versioned tarball.
+- *Per-template `install_dev_tools`.* Deferred: the flag stays internal (`false` by default, not exposed via config) until a second template type emerges (e.g., a minimal "ssh-only" box).
+- *`tic -x` exit code handling.* Resolved: make it strict. `tic` failure aborts bootstrap rather than being treated as best-effort, so missing `xterm-ghostty` terminfo never reaches a "successful" instance silently.

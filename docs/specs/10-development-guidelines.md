@@ -232,5 +232,5 @@ Agents working on `kleya` follow the same rules above plus:
 
 **Open questions**
 
-- *Pre-commit vs pre-push hook split.* Today everything runs at pre-push. Splitting fmt + commit-msg to pre-commit and clippy + nextest to pre-push would shorten the commit cycle for small edits but complicate the jj workflow. Defer until commit volume justifies it.
-- *Coverage exclusions.* `cargo-llvm-cov` does not currently exclude the adapter mapping modules even though they're mostly type-glue. Adding `# llvm-cov: ignore` annotations may flatter the floor metric; whether that's worth doing depends on whether the floor ever climbs into the territory where the mapping modules drag it down.
+- *Pre-commit vs pre-push hook split.* Resolved: leave hooks at pre-push. Splitting fmt + commit-msg to pre-commit and clippy + nextest to pre-push would complicate the jj workflow without a real win.
+- *Coverage exclusions.* Deferred: `cargo-llvm-cov` still includes the adapter mapping modules (mostly type-glue). Revisit only if the coverage floor climbs into territory where the mapping modules drag it down.
