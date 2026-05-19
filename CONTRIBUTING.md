@@ -1,6 +1,6 @@
 # Contributing to kleya
 
-This guide is written for both humans and coding agents. It covers the repo layout, required tooling, coding conventions, the test/CI gate, and the release process. The full design rationale lives in [`docs/superpowers/specs/2026-05-16-kleya-bootstrap-design.md`](docs/superpowers/specs/2026-05-16-kleya-bootstrap-design.md); read that before making non-trivial changes.
+This guide is written for both humans and coding agents. It covers the repo layout, required tooling, coding conventions, the test/CI gate, and the release process. The canonical design specification lives in [`docs/specs/`](docs/specs/) — eleven numbered markdown pages plus a JSON Schema sidecar, indexed by [`docs/README.md`](docs/README.md). Read [`docs/specs/00-overview.md`](docs/specs/00-overview.md) before making non-trivial changes; the historical drafts in [`docs/superpowers/specs/`](docs/superpowers/specs/) are kept for context only.
 
 ## Repo layout
 
@@ -34,9 +34,11 @@ kleya/
 │   │   └── src/key_store_fs.rs     # filesystem KeyStore impl
 │   └── kleya-bootstrap-assets/     # embeds setup_devbox.sh.j2 + ghostty.terminfo
 ├── docs/
+│   ├── README.md                   # index of every spec page + historical drafts
+│   ├── specs/                      # CANONICAL design spec (00-overview → 11-credentials-and-sso)
 │   └── superpowers/
-│       ├── specs/                  # design specs (the source of truth)
-│       └── plans/                  # implementation plans (one per spec)
+│       ├── specs/                  # historical drafts; canonical set supersedes them
+│       └── plans/                  # implementation plans (one per change)
 ├── .github/workflows/
 │   ├── ci.yml                      # fmt, clippy, nextest, deny, llvm-cov, floci
 │   └── release.yml                 # cargo-dist; tag-triggered
@@ -101,7 +103,7 @@ cargo nextest run -p kleya-core --features test-support
 
 ### Floci integration tests (optional)
 
-`crates/kleya-aws/tests/floci/template_lifecycle.rs` is marked `#[ignore]` and exercises the AWS adapter against [Floci](https://floci.io/), a local AWS emulator. Requires Docker:
+`crates/kleya-aws/tests/floci/template_lifecycle.rs` and `instance_lifecycle.rs` are marked `#[ignore]` and exercise the AWS adapter against [Floci](https://floci.io/), a local AWS emulator. Requires Docker:
 
 ```bash
 docker run -d --rm --name kleya-floci -p 4566:4566 \
@@ -233,9 +235,10 @@ If you ever re-run `dist generate --mode=ci` (e.g. when bumping `cargo-dist-vers
 
 ## Pointers
 
-- **Design spec:** [`docs/superpowers/specs/2026-05-16-kleya-bootstrap-design.md`](docs/superpowers/specs/2026-05-16-kleya-bootstrap-design.md) — the source of truth for what's intended and why.
-- **Implementation plan:** [`docs/superpowers/plans/2026-05-16-kleya-bootstrap.md`](docs/superpowers/plans/2026-05-16-kleya-bootstrap.md) — task-by-task build order.
-- **Review-fix design + plan:** [`docs/superpowers/specs/2026-05-18-review-fixes-design.md`](docs/superpowers/specs/2026-05-18-review-fixes-design.md), [`docs/superpowers/plans/2026-05-18-review-fixes.md`](docs/superpowers/plans/2026-05-18-review-fixes.md) — the most recent batch of corrections.
-- **Agent handoff:** [`ONBOARDING.md`](ONBOARDING.md) — for fresh agent sessions picking up the bootstrap plan.
+- **Canonical design spec:** [`docs/specs/`](docs/specs/) (indexed by [`docs/README.md`](docs/README.md)) — 11 numbered pages covering overview, domain model, CLI surface, configuration, provider port, bootstrap, launch+connect, error model, testing, architecture principles, development guidelines, and credentials+SSO; plus `canonical-types.schema.json`. Every page closes with `Assumptions / Decisions / Open questions`. This is the source of truth for what is checked into `main`.
+- **In-flight drafts and implementation plans:** [`docs/superpowers/specs/`](docs/superpowers/specs/) and [`docs/superpowers/plans/`](docs/superpowers/plans/). Drafts propose changes; plans drive their implementation. When a draft lands, it's promoted into `docs/specs/` (as a new page or as edits to an existing one) and the draft is either deleted or marked `Status: Withdrawn`. See [`docs/README.md`](docs/README.md#historical-drafts) for the current draft inventory.
+- **Agent handoff:** [`ONBOARDING.md`](ONBOARDING.md) — for fresh agent sessions picking up an in-progress plan.
 
-If you're writing a new spec, follow the format of the existing one (numbered sections, named limits, lifecycle tables for state machines). If you're writing a plan, follow `docs/superpowers/plans/2026-05-18-review-fixes.md` — bite-sized steps, explicit verification, conventional commit per task.
+If you're writing a new canonical spec page, follow the format of the existing numbered files in [`docs/specs/`](docs/specs/): a header (`**Status:** Implemented · **Date:** YYYY-MM-DD · **Owner:** <name>`), one Responsibilities section, body sections that describe what the code does (not what it might do), and the mandatory closing `## Assumptions and open questions` block split into Assumptions / Decisions / Open questions. Status is `Implemented` (the default for the canonical set); use `Draft` only for a clearly-marked design-stage page that will be promoted to `Implemented` when the work lands.
+
+If you're writing an implementation plan, follow [`docs/superpowers/plans/2026-05-19-credentials-login.md`](docs/superpowers/plans/2026-05-19-credentials-login.md) or [`docs/superpowers/plans/2026-05-19-spec-gaps.md`](docs/superpowers/plans/2026-05-19-spec-gaps.md) — bite-sized phases, explicit verification commands, conventional-commit subject per phase, and a documented `jj describe / jj bookmark move main / jj new / jj git push -b main` sequence at the end of each phase.
