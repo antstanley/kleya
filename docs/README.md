@@ -27,9 +27,11 @@ Start with the overview if you're new; jump to the relevant numbered file for ev
 
 ## Historical drafts
 
-The design docs that preceded this canonical spec set live under [`superpowers/specs/`](superpowers/specs/):
+The design docs that preceded this canonical spec set, and the in-flight drafts that propose new work, live under [`superpowers/specs/`](superpowers/specs/):
 
 - [2026-05-16-kleya-bootstrap-design.md](superpowers/specs/2026-05-16-kleya-bootstrap-design.md) — the original monolithic design doc.
 - [2026-05-18-review-fixes-design.md](superpowers/specs/2026-05-18-review-fixes-design.md) — the review-fix delta applied before v0.1.0-rc.2.
+- [2026-05-19-spec-gaps-design.md](superpowers/specs/2026-05-19-spec-gaps-design.md) — three gaps between v0.1.0-rc.2 and the bootstrap/review-fix specs (`--regenerate-key`, Floci instance lifecycle, user-data size integration test). Implemented post-`v0.1.0-rc.2`.
+- [2026-05-19-sso-login-design.md](superpowers/specs/2026-05-19-sso-login-design.md) — **Draft.** Enable the `credentials-login` Cargo feature on `aws-config` to drive an interactive IAM Identity Center login from inside kleya, removing the AWS CLI v2 dependency for SSO users.
 
-They are kept for context and for tracing decisions back to their original framing, but the canonical specs above supersede them.
+Drafts marked `Status: Draft` describe proposed changes, not shipped behaviour. They are promoted into the canonical spec set when the work lands.
