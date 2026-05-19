@@ -157,5 +157,5 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=eu-west-1 \
 **Open questions**
 
 - *Mutation testing.* Resolved: add `cargo-mutants` now, targeting the validator and handle-resolution paths. Even though the workspace is small, the surface that matters most for correctness is bounded and worth mutating.
-- *e2e against real AWS in CI.* Resolved: a sandbox AWS account will be provisioned. Document the IAM permissions and AWS configuration the tests require, and ensure every test cleans up the resources it creates.
+- *e2e against real AWS in CI.* Resolved: a sandbox AWS account will be provisioned. Document the IAM permissions and AWS configuration the tests require, and ensure every test cleans up the resources it creates. See [docs/e2e-aws.md](../e2e-aws.md) for the IAM policy and setup procedure.
 - *Floci `ec2:RunInstances` coverage.* Deferred (upstream): blocked on Floci shipping `CreateLaunchTemplate`. Expanding the Floci tier from template-only to launch-and-terminate is out of scope for kleya until then.
