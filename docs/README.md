@@ -21,6 +21,7 @@ Numbered files in [`specs/`](specs/) are read in order; the JSON Schema sidecar 
 | [specs/08-testing.md](specs/08-testing.md) | Test tiers, Floci, snapshots, property tests, coverage floor |
 | [specs/09-architecture-principles.md](specs/09-architecture-principles.md) | Crate layout, hexagonal layering, dependency graph, runtime / process model |
 | [specs/10-development-guidelines.md](specs/10-development-guidelines.md) | Tiger-style rules, named limits, hooks, CI, release process |
+| [specs/11-credentials-and-sso.md](specs/11-credentials-and-sso.md) | AWS credentials chain, profile / region resolution, SSO via cached tokens, why kleya never owns login |
 | [specs/canonical-types.schema.json](specs/canonical-types.schema.json) | JSON Schema (Draft 2020-12) for every domain entity, config struct, and error variant |
 
 Start with the overview if you're new; jump to the relevant numbered file for everything else. Every page closes with an `Assumptions / Decisions / Open questions` block.
@@ -32,6 +33,6 @@ The design docs that preceded this canonical spec set, and the in-flight drafts 
 - [2026-05-16-kleya-bootstrap-design.md](superpowers/specs/2026-05-16-kleya-bootstrap-design.md) — the original monolithic design doc.
 - [2026-05-18-review-fixes-design.md](superpowers/specs/2026-05-18-review-fixes-design.md) — the review-fix delta applied before v0.1.0-rc.2.
 - [2026-05-19-spec-gaps-design.md](superpowers/specs/2026-05-19-spec-gaps-design.md) — three gaps between v0.1.0-rc.2 and the bootstrap/review-fix specs (`--regenerate-key`, Floci instance lifecycle, user-data size integration test). Implemented post-`v0.1.0-rc.2`.
-- [2026-05-19-sso-login-design.md](superpowers/specs/2026-05-19-sso-login-design.md) — **Draft.** Enable the `credentials-login` Cargo feature on `aws-config` to drive an interactive IAM Identity Center login from inside kleya, removing the AWS CLI v2 dependency for SSO users.
+- [2026-05-19-sso-login-design.md](superpowers/specs/2026-05-19-sso-login-design.md) — **Withdrawn.** Proposed adding a `kleya sso login | logout | status` subcommand tree backed by `aws-config`'s `credentials-login` feature. Withdrawn after operator decision that AWS authentication must happen outside kleya. The canonical record of the consumption-only behaviour kleya actually ships is at [specs/11-credentials-and-sso.md](specs/11-credentials-and-sso.md).
 
 Drafts marked `Status: Draft` describe proposed changes, not shipped behaviour. They are promoted into the canonical spec set when the work lands.

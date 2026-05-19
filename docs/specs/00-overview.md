@@ -87,6 +87,7 @@ Operators who drive agentic coding sessions on disposable cloud boxes need a rep
 | [08-testing.md](08-testing.md) | Test tiers, Floci, snapshots, property tests, coverage floor |
 | [09-architecture-principles.md](09-architecture-principles.md) | Crate layout, hexagonal layering, dependency graph, runtime/process model |
 | [10-development-guidelines.md](10-development-guidelines.md) | Tiger-style rules, named limits, hooks, CI, release |
+| [11-credentials-and-sso.md](11-credentials-and-sso.md) | AWS credentials chain, profile / region resolution, SSO via cached tokens, why kleya never owns login |
 | [canonical-types.schema.json](canonical-types.schema.json) | JSON Schema for every domain entity referenced above |
 
 ---
@@ -110,7 +111,7 @@ Operators who drive agentic coding sessions on disposable cloud boxes need a rep
 
 **Assumptions**
 
-- The operator has working AWS credentials (env, profile, or IMDS).
+- The operator has working AWS credentials reachable through `aws-config`'s default chain (env vars, profile, SSO cached token, `credential_process`, web-identity OIDC, or IMDS). Authentication itself happens outside kleya — `aws sso login`, `aws configure`, `aws-vault`, `granted`, etc. See [11-credentials-and-sso.md](11-credentials-and-sso.md).
 - A default VPC exists in the chosen region. Absence surfaces as `Error::ConfigInvalid { reason: "no default VPC in region X" }`.
 - The user's Ghostty client recognises `xterm-ghostty` locally; this design only installs the terminfo server-side.
 - Docker is available for running Floci in CI when the AWS-shaped test tier is enabled.
