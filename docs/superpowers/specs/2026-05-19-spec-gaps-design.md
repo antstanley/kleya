@@ -6,12 +6,15 @@
 
 ## 1. Purpose
 
-The bootstrap and review-fix specs were almost fully landed by the v0.1.0-rc.2 cut, but a parallel audit (specs §-by-§ vs source) surfaced four items the implementation does not satisfy:
+The bootstrap and review-fix specs were almost fully landed by the v0.1.0-rc.2 cut. Initial audit (specs §-by-§ vs source) flagged four items, but a parallel commit (`557b9000 docs: add canonical spec set under docs/specs/`) landed on `main` while this spec was in flight and supersedes one of them. The reconciled gap list:
 
-1. The §9 `KeyOrphaned` recovery path is not operator-actionable — there is no `--regenerate-key` flag on `kleya launch`, so the documented manual override is impossible.
-2. §13 mandates structured telemetry fields (`command`, `region`, `template`, `instance_id`) on `--log-format json`. Today the JSON layer is wired but the fields are not attached at the command boundary; `grep -n` finds two stray `tracing::info!` calls in `launch.rs` only.
-3. §12 lists Floci-tier tests covering `template_lifecycle.rs` **and** `instance_lifecycle.rs`. Only the former exists.
-4. §7 demands a negative-space test: padding `extra_post_lines` past the operative gzip limit must return `Error::UserDataTooLarge`. The unit test in `encode.rs` covers the encoder directly but no integration test exercises the full `render → encode` path past the limit.
+1. The §9 `KeyOrphaned` recovery path is not operator-actionable — there is no `--regenerate-key` flag on `kleya launch`, so the documented manual override is impossible. Canonical 07-error-model.md still describes the operator decision but does not contradict the draft's flag-based mechanism.
+2. §12 lists Floci-tier tests covering `template_lifecycle.rs` **and** `instance_lifecycle.rs`. Only the former exists; canonical 08-testing.md §25 keeps the same expectation ("instance launch/list/terminate happy paths + induced error per code path").
+3. §7 demands a negative-space test: padding `extra_post_lines` past the operative limit must return `Error::UserDataTooLarge`. The unit test in `encode.rs` covers the encoder directly but no integration test exercises the full `render → encode` path past the limit; canonical 05-bootstrap-rendering.md §106-110 preserves the two-stage size check.
+
+**Dropped after canonical-spec reconciliation:**
+
+- *Structured telemetry fields (`command`, `region`, `template`, `instance_id`).* The 2026-05-16 draft §13 listed these as "mandatory" under `--log-format json`, but the canonical 00-overview.md §104 and 02-cli-surface.md §142-143 describe JSON mode as "switches the formatter only" with no mandatory fields. Reading both specs together, the canonical wording is the operative requirement — and it is met by the current `logging.rs`. The draft-only requirement is dropped here as out of scope; a future change can re-introduce structured spans if operators ask for them.
 
 Two further items in the bootstrap-spec audit are explicitly **non-gaps** and out of scope here:
 
@@ -71,51 +74,7 @@ async fn keypair_delete(&self, name: &KeyName) -> Result<()>;
 
 **Error mapping:** no new variants. Delete-failure surfaces as `Error::Adapter { provider: "aws-ec2", source }`, exit code 70.
 
-### 2.2 Structured telemetry fields (`command`, `region`, `template`, `instance_id`)
-
-**Why:** Spec §13 lists these four as mandatory fields under `--log-format json`. They are not currently emitted, which makes the JSON log mode less useful than the human-readable mode — operators cannot grep for `instance_id=i-…` because no event carries the field.
-
-**Approach:** Use `tracing::Span` at the command boundary, not per-event field plumbing. Each top-level dispatch arm in `kleya-cli/src/dispatch.rs` opens an `info_span!` with the available fields and enters it for the duration of the call. Sub-events (`info!`, `warn!`) inherit the span fields automatically under the JSON layer's `flatten_event` formatting.
-
-**Field availability** by command:
-
-| Command   | `command` | `region` | `template` | `instance_id` |
-|-----------|-----------|----------|------------|---------------|
-| launch    | "launch"  | yes      | yes        | filled in after `instance_launch` returns (via `Span::current().record`) |
-| connect   | "connect" | yes      | tag-derived if present | yes (after `resolve_handle`) |
-| terminate | "terminate" | yes    | tag-derived | yes |
-| list      | "list"    | yes      | — | — |
-| template create/update/list/delete | "template:<verb>" | yes | yes (name) | — |
-| config show/path | "config:<verb>" | — | — | — |
-
-A field that doesn't apply for a given command is **omitted from the span declaration**, not emitted as `null`. JSON consumers see only present fields, matching the spec's "where applicable".
-
-**Implementation sketch:**
-
-```rust
-// In each dispatch arm:
-let span = tracing::info_span!(
-    "kleya",
-    command = "launch",
-    region = %resolved_region,
-    template = %template_name,
-    instance_id = tracing::field::Empty,
-);
-let _enter = span.enter();
-// ... later, once we have the id:
-tracing::Span::current().record("instance_id", &tracing::field::display(id.as_str()));
-```
-
-The text formatter strips span fields by default, so the human-readable output is unchanged.
-
-**Tests:**
-
-- `kleya-cli/tests/logging_fields.rs` (new). Capture tracing output via a custom `tracing_subscriber::layer::Layer` that records events into a `Vec<Value>`. Drive `dispatch::run_with` for `list` (smallest payload) and for `launch --dry-run` against fakes; assert the captured events include `command`, `region`, and (for `launch --dry-run`) **no** `instance_id` field (dry-run never launches).
-- The Floci tier is unaffected: spans don't change behaviour, only output.
-
-**Non-goals (spec §13):** the `KLEYA_DEBUG_SECRETS=1` argv dump and the `limit_hit` warn counter already exist (the latter is implicit in `Error::UserDataTooLarge` formatting; an explicit counter is out of scope and tracked separately).
-
-### 2.3 Floci `instance_lifecycle.rs`
+### 2.2 Floci `instance_lifecycle.rs`
 
 **Why:** §12's Floci row lists "template create/list/delete, instance launch/list/terminate happy path + induced error per code path". Today the file `template_lifecycle.rs` exists and is `#[ignore]`-gated on `KLEYA_TEST_FLOCI=1`; the matching `instance_lifecycle.rs` is missing.
 
@@ -130,7 +89,7 @@ The text formatter strips span fields by default, so the human-readable output i
 
 **Note on Floci capability:** today's CI marks the Floci job `continue-on-error: true` because Floci lacks `CreateLaunchTemplate` (see `.github/workflows/ci.yml`). The new tests degrade gracefully: when `CreateLaunchTemplate` fails, the test prints "Floci does not support this op, skipping" and returns early with `Ok(())` so the run is green even on incompatible Floci versions. Once Floci adds support, the tests start asserting for real with no code change.
 
-### 2.4 `UserDataTooLarge` integration test
+### 2.3 `UserDataTooLarge` integration test
 
 **Why:** §7 specifies: "padding `extra_post_lines` past the operative limit must return `Error::UserDataTooLarge { bytes, max }`". The encode-layer unit test covers the gzip-output cap; what's missing is an end-to-end `render → encode` test confirming the full pipeline propagates the error.
 
