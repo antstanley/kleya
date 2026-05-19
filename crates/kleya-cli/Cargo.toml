@@ -21,7 +21,7 @@ path = "src/main.rs"
 kleya-core = { path = "../kleya-core" }
 kleya-aws = { path = "../kleya-aws" }
 kleya-bootstrap-assets = { path = "../kleya-bootstrap-assets" }
-aws-config = "1"
+aws-config = { version = "1", features = ["credentials-login"] }
 aws-sdk-ec2 = "1"
 aws-sdk-ssm = "1"
 clap = { workspace = true }

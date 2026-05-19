@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 kleya-core = { path = "../kleya-core" }
-aws-config = "1"
+aws-config = { version = "1", features = ["credentials-login"] }
 aws-sdk-ec2 = "1"
 aws-sdk-ssm = "1"
 aws-credential-types = "1"
