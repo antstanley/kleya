@@ -11,6 +11,8 @@ pub struct Cli {
     pub profile: Option<String>,
     #[arg(long, global = true, env = "KLEYA_REGION")]
     pub region: Option<String>,
+    #[arg(long, global = true, env = "KLEYA_PROVIDER")]
+    pub provider: Option<String>,
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
     #[arg(

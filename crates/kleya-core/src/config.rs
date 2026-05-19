@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default = "default_provider")]
+    pub provider: String,
     #[serde(default = "default_region")]
     pub default_region: String,
     #[serde(default = "default_profile")]
@@ -24,6 +26,9 @@ pub struct Config {
     pub templates: Vec<TemplateCfg>,
 }
 
+fn default_provider() -> String {
+    "aws".into()
+}
 fn default_region() -> String {
     "eu-west-1".into()
 }
@@ -161,6 +166,7 @@ pub struct TagCfg {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            provider: default_provider(),
             default_region: default_region(),
             default_profile: default_profile(),
             defaults: Defaults::default(),

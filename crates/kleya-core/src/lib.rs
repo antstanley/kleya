@@ -25,4 +25,4 @@ pub mod util;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use json_envelope::JsonList;
-pub use parsed_config::{ParsedConfig, ParsedTemplate};
+pub use parsed_config::{ParsedConfig, ParsedTemplate, Provider};

@@ -22,9 +22,40 @@ use crate::model::{
     template::TemplateName,
 };
 
+/// Compute provider — drives which adapter the CLI constructs.
+///
+/// New providers add a variant; the enum is `#[non_exhaustive]` so adding
+/// a variant is not a breaking change for downstream library consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Provider {
+    Aws,
+}
+
+impl Provider {
+    pub fn parse(s: &str) -> crate::Result<Self> {
+        match s {
+            "aws" => Ok(Self::Aws),
+            other => Err(crate::Error::ConfigInvalid {
+                reason: format!(
+                    "unknown provider '{other}'; supported: aws (gcp/hetzner/fly are not yet implemented)"
+                ),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Aws => "aws",
+        }
+    }
+}
+
 /// Typed configuration view. Construct via [`Config::parse`].
 #[derive(Debug, Clone)]
 pub struct ParsedConfig {
+    pub provider: Provider,
     pub default_region: Region,
     pub default_profile: String,
     pub default_key_name: KeyName,
@@ -66,6 +97,7 @@ impl Config {
         self.validate()?;
         let raw = self.clone();
         let Config {
+            provider,
             default_region,
             default_profile,
             defaults,
@@ -74,6 +106,7 @@ impl Config {
             keys,
             templates,
         } = self;
+        let provider = Provider::parse(&provider)?;
         let default_region = Region::new(default_region)?;
         let default_key_name = KeyName::new(keys.default_key_name.clone())?;
         let default_market = parse_market(&defaults.market)?;
@@ -88,6 +121,7 @@ impl Config {
             .map(parse_template)
             .collect::<Result<Vec<_>>>()?;
         Ok(ParsedConfig {
+            provider,
             default_region,
             default_profile,
             default_key_name,
@@ -178,10 +212,40 @@ mod tests {
     #[test]
     fn defaults_parse() {
         let p = Config::default().parse().expect("defaults parse");
+        assert_eq!(p.provider, Provider::Aws);
         assert_eq!(p.default_region.as_str(), "eu-west-1");
         assert_eq!(p.default_market, MarketKind::Spot);
         assert_eq!(p.default_spot_type, SpotType::OneTime);
         assert_eq!(p.default_key_name.as_str(), "kleya-default");
+    }
+
+    #[test]
+    fn unknown_provider_rejected() {
+        let c = Config {
+            provider: "fly".into(),
+            ..Config::default()
+        };
+        let err = c.parse().expect_err("non-aws providers must be rejected");
+        match err {
+            Error::ConfigInvalid { reason } => {
+                assert!(reason.contains("fly"), "reason: {reason}");
+                assert!(reason.contains("aws"), "reason: {reason}");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn provider_parse_aws() {
+        assert_eq!(Provider::parse("aws").unwrap(), Provider::Aws);
+        assert_eq!(Provider::Aws.as_str(), "aws");
+    }
+
+    #[test]
+    fn provider_parse_unknown() {
+        assert!(Provider::parse("gcp").is_err());
+        assert!(Provider::parse("hetzner").is_err());
+        assert!(Provider::parse("").is_err());
     }
 
     #[test]

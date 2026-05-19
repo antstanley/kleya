@@ -22,26 +22,55 @@ use crate::key_store_fs::FsKeyStore;
 
 pub async fn run(cli: Cli, cancel: tokio_util::sync::CancellationToken) -> kleya_core::Result<()> {
     let config = Arc::new(config_loader::load(cli.config.as_deref())?);
+    let effective_provider = resolve_provider(cli.provider.as_deref(), config.provider)?;
+    tracing::info!(provider = %effective_provider.as_str(), "using provider");
     let region = cli
         .region
         .clone()
         .unwrap_or_else(|| config.default_region.as_str().to_string());
-    let ec2 = kleya_aws::client::build_ec2_client(&region, None).await;
-    let ssm = {
-        use aws_config::BehaviorVersion;
-        let cfg = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_sdk_ec2::config::Region::new(region.clone()))
-            .load()
-            .await;
-        aws_sdk_ssm::Client::new(&cfg)
+    // NOTE: `Provider` is `#[non_exhaustive]` so downstream library consumers
+    // are not broken by a new variant. Inside this binary we *want* the build
+    // to break when a new variant lands without adapter wiring — the wildcard
+    // arm below is a deliberate `unreachable!` rather than a silent fallback
+    // so anyone adding `Provider::Fly` and forgetting to wire dispatch sees
+    // an immediate, loud failure. On nightly this could be promoted to
+    // `#[deny(non_exhaustive_omitted_patterns)]` for a true compile error.
+    let compute: Arc<dyn CloudCompute> = match effective_provider {
+        kleya_core::parsed_config::Provider::Aws => {
+            let ec2 = kleya_aws::client::build_ec2_client(&region, None).await;
+            let ssm = {
+                use aws_config::BehaviorVersion;
+                let cfg = aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_sdk_ec2::config::Region::new(region.clone()))
+                    .load()
+                    .await;
+                aws_sdk_ssm::Client::new(&cfg)
+            };
+            Arc::new(kleya_aws::ec2::AwsEc2 {
+                ec2: Arc::new(ec2),
+                ssm: Arc::new(ssm),
+                region: region.clone(),
+            })
+        }
+        _ => unreachable!(
+            "Provider::{effective_provider:?} variant is not wired in dispatch::run; \
+             add a match arm that constructs the appropriate CloudCompute adapter"
+        ),
     };
-    let compute: Arc<dyn CloudCompute> = Arc::new(kleya_aws::ec2::AwsEc2 {
-        ec2: Arc::new(ec2),
-        ssm: Arc::new(ssm),
-        region: region.clone(),
-    });
     let key_store: Arc<dyn KeyStore> = Arc::new(FsKeyStore::from_parsed(&config)?);
     run_with(cli, config, region, compute, key_store, cancel).await
+}
+
+/// Resolve the effective provider given the CLI override (if any) and the
+/// value parsed from the user's config. The CLI override wins.
+pub(crate) fn resolve_provider(
+    cli_provider: Option<&str>,
+    config_provider: kleya_core::parsed_config::Provider,
+) -> kleya_core::Result<kleya_core::parsed_config::Provider> {
+    match cli_provider {
+        Some(s) => kleya_core::parsed_config::Provider::parse(s),
+        None => Ok(config_provider),
+    }
 }
 
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -397,5 +426,31 @@ mod tests {
     #[test]
     fn effective_wait_neither_default_false() {
         assert!(!effective_wait_bootstrap(&args(false, false, false)));
+    }
+
+    #[test]
+    fn resolve_provider_uses_config_when_cli_absent() {
+        let got = resolve_provider(None, kleya_core::parsed_config::Provider::Aws)
+            .expect("config-only resolve succeeds");
+        assert_eq!(got, kleya_core::parsed_config::Provider::Aws);
+    }
+
+    #[test]
+    fn resolve_provider_accepts_aws_override() {
+        let got = resolve_provider(Some("aws"), kleya_core::parsed_config::Provider::Aws)
+            .expect("aws override accepted");
+        assert_eq!(got, kleya_core::parsed_config::Provider::Aws);
+    }
+
+    #[test]
+    fn resolve_provider_rejects_fly_override() {
+        let err = resolve_provider(Some("fly"), kleya_core::parsed_config::Provider::Aws)
+            .expect_err("fly override rejected");
+        match err {
+            kleya_core::Error::ConfigInvalid { reason } => {
+                assert!(reason.contains("fly"), "reason: {reason}");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
     }
 }
