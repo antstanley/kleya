@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "kleya-aws"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1794,11 +1794,11 @@ dependencies = [
 
 [[package]]
 name = "kleya-bootstrap-assets"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 
 [[package]]
 name = "kleya-cli"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "kleya-core"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "async-trait",
  "base64",
