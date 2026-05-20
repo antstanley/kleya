@@ -208,22 +208,28 @@ Releases are driven by tag pushes. The workflow is in `.github/workflows/release
 
 ### Cutting a release
 
+A version bump touches six files: the four `crates/*/Cargo.toml`, `Cargo.lock` (the four workspace-member entries), and `README.md` (the status line, the two installer URLs, and the `--version` pin). Keep them in lockstep.
+
 ```bash
-# 1. Bump versions across the workspace
-sed -i 's/version = "0.1.0-rc.1"/version = "0.1.0"/' crates/*/Cargo.toml
-cargo update --workspace            # refresh Cargo.lock
+# 1. Bump versions across the workspace (OLD -> NEW, e.g. 0.1.0-rc.2 -> 0.1.0-rc.3)
+OLD=0.1.0-rc.2; NEW=0.1.0-rc.3
+sed -i "s/$OLD/$NEW/g" crates/*/Cargo.toml README.md   # macOS: sed -i ''
+cargo update --workspace            # refresh Cargo.lock's workspace entries
 
 # 2. Verify dist is happy
 dist plan                           # prints the artifact matrix
 
 # 3. Commit + push the bump
-jj describe -m "release: v0.1.0"
-jj bookmark move main --to @-
+jj describe -m "release: v$NEW"     # @ holds the bump
+jj new                              # new empty working copy on top
+jj bookmark set main -r @-          # point main at the release commit
 jj git push --bookmark main         # CI runs
 
-# 4. After CI is green, tag and push (use git for annotated tags)
-git tag -a v0.1.0 main -m "v0.1.0"
-git push origin v0.1.0              # triggers release.yml
+# 4. After CI is green, create + push the tag.
+#    jj creates the tag (colocated repo exports it to refs/tags/), but
+#    `jj git push` can't push tags (jj 0.41) — so push it with git.
+jj tag set v$NEW -r main            # or: git tag -a v$NEW main -m "v$NEW"
+git push origin v$NEW               # triggers release.yml
 
 # 5. Wait for the release workflow (~30 min — macOS LTO dominates).
 #    It produces:
@@ -231,7 +237,7 @@ git push origin v0.1.0              # triggers release.yml
 #      - kleya-cli-installer.sh
 #      - source.tar.gz
 #      - sha256.sum
-#    Auto-publishes a GitHub Release at /releases/tag/v0.1.0
+#    Auto-publishes a GitHub Release at /releases/tag/v$NEW
 #    (prerelease flag is auto-set if the version has a -rc/-alpha/-beta suffix).
 ```
 
