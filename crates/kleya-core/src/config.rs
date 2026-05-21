@@ -100,6 +100,12 @@ pub struct SshCfg {
     pub tmux: bool,
     #[serde(default = "default_session")]
     pub tmux_session: String,
+    /// `TERM` value sent to the remote pty via `ssh -o SetEnv`. Defaults to
+    /// `xterm-256color` so terminals whose terminfo is absent on the remote
+    /// (e.g. `xterm-ghostty`) don't break tmux/ncurses. Set to empty to send
+    /// the local `$TERM` unchanged.
+    #[serde(default = "default_term")]
+    pub term: String,
     #[serde(default)]
     pub extra_args: Vec<String>,
 }
@@ -109,12 +115,16 @@ fn default_ssh_user() -> String {
 fn default_session() -> String {
     "kleya".into()
 }
+fn default_term() -> String {
+    "xterm-256color".into()
+}
 impl Default for SshCfg {
     fn default() -> Self {
         Self {
             user: default_ssh_user(),
             tmux: true,
             tmux_session: default_session(),
+            term: default_term(),
             extra_args: vec![],
         }
     }

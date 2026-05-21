@@ -239,11 +239,12 @@
     "SshCfg": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["user", "tmux", "tmux_session", "extra_args"],
+      "required": ["user", "tmux", "tmux_session", "term", "extra_args"],
       "properties": {
         "user":         { "type": "string" },
         "tmux":         { "type": "boolean" },
         "tmux_session": { "type": "string", "pattern": "^[a-z0-9_-]{1,63}$" },
+        "term":         { "type": "string", "description": "TERM sent to the remote pty via `ssh -o SetEnv`; empty string forwards the local $TERM." },
         "extra_args": {
           "type": "array",
           "items": { "type": "string" }

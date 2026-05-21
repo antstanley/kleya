@@ -317,5 +317,7 @@ xterm-ghostty|ghostty|Ghostty,
 GHOSTTY_TERMINFO_EOF
 # Strict: tic failure aborts bootstrap (set -e above). Missing xterm-ghostty
 # terminfo must never reach a "successful" instance silently.
-sudo tic -x /tmp/ghostty.terminfo
+# `-o /usr/share/terminfo` forces a system-wide install: bare `sudo tic` writes
+# to root's ~/.terminfo, which the ssh login user cannot read.
+sudo tic -x -o /usr/share/terminfo /tmp/ghostty.terminfo
 rm /tmp/ghostty.terminfo

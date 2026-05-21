@@ -146,12 +146,15 @@ ssh -i <key_path>
     -o StrictHostKeyChecking=accept-new
     -o ServerAliveInterval=30
     -o ConnectTimeout=10
+    -o "SetEnv TERM=<config.ssh.term>"         # only if ssh.term is non-empty
     [config.ssh.extra_args…]
     -t <config.ssh.user>@<endpoint>
     tmux new-session -A -s <session>           # only if ssh.tmux && !--no-tmux
 ```
 
 `-A` attaches to or creates the named session; `-t` forces a TTY. `--no-tmux` drops the trailing `tmux …` argv. `--tmux-session <s>` substitutes the session name after passing the `^[a-z0-9_-]{1,63}$` regex.
+
+`SetEnv TERM=<ssh.term>` (default `xterm-256color`) overrides the `TERM` that `-t` would otherwise forward from the operator's `$TERM`. Terminals whose terminfo is absent on the remote — e.g. `xterm-ghostty` — would otherwise break tmux/ncurses with `missing or unsuitable terminal`. Setting `ssh.term = ""` forwards the local `$TERM` unchanged (rely on `bootstrap.install_ghostty_terminfo` to provide the matching terminfo server-side).
 
 ### Key-name fallback semantics
 
@@ -225,7 +228,7 @@ Four unit tests pin the truth table; see [02-cli-surface.md](02-cli-surface.md) 
 
 | Flags | Behaviour |
 |---|---|
-| no flags | Wait for `Running`, print `id name dns`, exit 0. Operator runs `kleya connect <name>` next. |
+| no flags | Wait for `Running`, print `id name dns` followed by a `connect with: kleya connect <name>` hint, exit 0. Operator runs that next. |
 | `--wait-bootstrap` | After `Running`, run `cloud-init status --wait` over SSH, exit 0. Still does not connect. |
 | `--connect` | After `Running` + cloud-init (implicit wait), TCP-probe 22, then `execvp` ssh. |
 | `--connect --no-wait-bootstrap` | After `Running`, TCP-probe 22 only, then `execvp` ssh. |

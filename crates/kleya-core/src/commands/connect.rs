@@ -159,6 +159,13 @@ impl ConnectService {
             "-o".into(),
             "ConnectTimeout=10".into(),
         ];
+        // Override the pty's TERM so terminals whose terminfo is missing on the
+        // remote (e.g. `xterm-ghostty`) don't break tmux/ncurses with
+        // "missing or unsuitable terminal". Empty config keeps the local $TERM.
+        if !self.config.ssh.term.is_empty() {
+            args.push("-o".into());
+            args.push(format!("SetEnv TERM={}", self.config.ssh.term));
+        }
         for a in &self.config.ssh.extra_args {
             args.push(a.clone());
         }
@@ -245,6 +252,13 @@ mod tests {
             .expect("plan ok");
         assert_eq!(plan.command.program, "ssh");
         assert!(plan.command.args.iter().any(|a| a == "tmux"));
+        assert!(
+            plan.command
+                .args
+                .iter()
+                .any(|a| a == "SetEnv TERM=xterm-256color"),
+            "argv should set a remote-safe TERM by default"
+        );
         let dash_s = plan
             .command
             .args

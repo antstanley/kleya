@@ -208,6 +208,7 @@ install_ghostty_terminfo = true
 user         = "ec2-user"
 tmux         = true
 tmux_session = "kleya"
+term         = "xterm-256color"  # TERM sent to the remote pty; "" sends local $TERM
 extra_args   = []            # appended verbatim to the ssh argv
 
 [keys]

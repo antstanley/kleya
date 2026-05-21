@@ -178,6 +178,13 @@ pub async fn run_with(
                         .map_or("-", kleya_core::model::instance::InstanceName::as_str),
                     inst.public_dns.as_deref().unwrap_or("-"),
                 );
+                if !connect {
+                    let handle = inst
+                        .name
+                        .as_ref()
+                        .map_or_else(|| inst.id.as_str().to_string(), |n| n.as_str().to_string());
+                    println!("connect with: kleya connect {handle}");
+                }
                 if connect || do_wait {
                     let endpoint =
                         inst.public_dns

@@ -62,6 +62,7 @@ install_ghostty_terminfo = true
 user         = "ec2-user"
 tmux         = true
 tmux_session = "kleya"
+term         = "xterm-256color"  # TERM sent to the remote pty; "" sends local $TERM
 extra_args   = []                # appended verbatim to the ssh argv
 
 [keys]
@@ -104,6 +105,7 @@ Every field has a `serde` `default = "fn"` so partial files are merged against d
 | `ssh.user` | `"ec2-user"` | AL2023 |
 | `ssh.tmux` | `true` | `tmux new-session -A -s <session>` appended to argv |
 | `ssh.tmux_session` | `"kleya"` | Validated against `^[a-z0-9_-]{1,63}$` at connect time |
+| `ssh.term` | `"xterm-256color"` | Sent via `ssh -o SetEnv TERM=…`; avoids "missing or unsuitable terminal" when the local `$TERM` (e.g. `xterm-ghostty`) has no terminfo on the remote. `""` forwards the local `$TERM` unchanged |
 | `ssh.extra_args` | `[]` | |
 | `keys.dir` | `"~/.config/kleya/keys"` | Created at mode `0o700`; pem files at `0o600` |
 | `keys.default_key_name` | `"kleya-default"` | Used as the `kleya:key` tag fallback on unmanaged-but-managed-tag-bearing instances |
