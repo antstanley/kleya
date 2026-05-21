@@ -36,3 +36,15 @@ The design docs that preceded this canonical spec set, and the in-flight drafts 
 - [2026-05-19-sso-login-design.md](superpowers/specs/2026-05-19-sso-login-design.md) — **Withdrawn.** Proposed adding a `kleya sso login | logout | status` subcommand tree backed by `aws-config`'s `credentials-login` feature. Withdrawn after operator decision that AWS authentication must happen outside kleya. The canonical record of the consumption-only behaviour kleya actually ships is at [specs/11-credentials-and-sso.md](specs/11-credentials-and-sso.md).
 
 Drafts marked `Status: Draft` describe proposed changes, not shipped behaviour. They are promoted into the canonical spec set when the work lands.
+
+## Change specs
+
+Proposed deltas to the canonical specs live as single documents under [`specs/changes/`](specs/changes/). Each describes code that does **not** yet exist (future / imperative voice); when the work ships, the change spec is merged into the canonical pages and moved to `specs/changes/merged/` with its `Status` flipped to `Merged` — preserved as dated history, not deleted.
+
+Pending change specs:
+
+- [specs/changes/2026-05-21-provider_neutral_port.md](specs/changes/2026-05-21-provider_neutral_port.md) — split the AWS-shaped `CloudCompute` trait into a universal `Compute` port plus optional capability traits, and make provider adapter crates optional/feature-gated, to support 10+ pluggable (mostly thin-REST) providers.
+- [specs/changes/2026-05-21-aws_thin_rest_adapter.md](specs/changes/2026-05-21-aws_thin_rest_adapter.md) — *(depends on provider_neutral_port)* drop `aws-sdk-ec2`/`aws-sdk-ssm`; call EC2/SSM directly via `reqwest` + `aws-sigv4` signing, keeping `aws-config` for the credential chain.
+- [specs/changes/2026-05-21-fly_provider.md](specs/changes/2026-05-21-fly_provider.md) — *(depends on provider_neutral_port)* add Fly.io Machines as the first thin-REST provider (`fly` feature), implementing `Compute` + `ImageResolver` only.
+
+Merged change specs (history): [`specs/changes/merged/`](specs/changes/merged/README.md).
